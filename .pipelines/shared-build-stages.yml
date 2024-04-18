@@ -1,12 +1,14 @@
 # Build stages shared between Official, Buddy and nightly builds.
 # For nightly builds, parameters.Nightly will be set to True
 #
-# The parent template must include ContainerPlatform/ContainerPlatform repository with "cplat" alias
+# The parent template must include ContainerPlatform/ContainerPlatform repository with "ContainerPlatform" alias
 
 parameters:
   - name: Nightly
     type: boolean
     default: false
+  - name: rpmVersion
+    type: string 
 
 stages:
   - stage: build_repo
@@ -25,6 +27,10 @@ stages:
           testDir: "$(outDir)/test"
           srcDir: "$(outDir)/src"
 
+          # We explicitly checkout this repo, so no need for OB to do it for us. 
+          ob_git_checkout: false
+          ob_git_skip_checkout_none: true
+
           ob_outputDirectory: "$(Build.StagingDirectory)"
 
         steps:
@@ -40,9 +46,20 @@ stages:
               echo "##[endgroup]"
             displayName: "📂 Show Environment"
 
+          - checkout: self
+            fetchTags: true
+            displayName: Checkout self 
+
+          # Checkout ContainerPlatform so that the azurelinux build templates from ContainerPlatform
+          # can access the right script files. 
+          - checkout: ContainerPlatform
+            displayName: Checkout ContainerPlatform
+
           # Nightly builds use different versioning scheme
           - ${{ if not(parameters.Nightly) }}:
-              - template: .pipelines/templates/build/steps/version.yml@cplat
+              - template: .pipelines/templates/build/steps/version.yml@ContainerPlatform
+                parameters:
+                  workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
 
           - ${{ if parameters.Nightly }}:
               - script: |
@@ -61,13 +78,14 @@ stages:
                   ver=ob-${gitVersion}-nightly-${timeStamp}-$(Build.BuildId)
                   echo '##vso[task.setvariable variable=versionString]'${ver//\//_}
                 displayName: Merge upstream changes for nightly build
+                workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
 
               - task: onebranch.pipeline.version@1
                 inputs:
                   system: "Custom"
                   customVersion: "$(versionString)"
 
-          - template: .pipelines/templates/build/codeql-go-tracing-workaround.yml@cplat
+          - template: .pipelines/templates/build/codeql-go-tracing-workaround.yml@ContainerPlatform
             parameters:
               containerImage: linux_build_container
 
@@ -108,6 +126,7 @@ stages:
               GOOS: windows
               OUT_DIR: "$(outDir)"
             displayName: Build hcsshim binaries
+            workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
 
           - script: |
               set -eoux
@@ -127,7 +146,7 @@ stages:
               GOOS: windows
               OUT_DIR: "$(outDir)"
               GOFLAGS: -mod=mod
-            workingDirectory: test
+            workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim/test
             displayName: Build test binaries
 
           # code coverage needs the source files to generate the report
@@ -140,10 +159,9 @@ stages:
                 !vendor/**
               TargetFolder: $(srcDir)
             displayName: Copy Source Files
-
           - task: CopyFiles@2
             inputs:
-              sourceFolder: "test/cri-containerd"
+              sourceFolder: $(Build.SourcesDirectory)/Microsoft.hcsshim/test/cri-containerd
               contents: |
                 *.rego
                 *.json
@@ -152,7 +170,7 @@ stages:
 
           - task: CopyFiles@2
             inputs:
-              sourceFolder: "pkg/ncproxy"
+              sourceFolder: $(Build.SourcesDirectory)/Microsoft.hcsshim/pkg/ncproxy
               contents: |
                 ncproxygrpc/v0/networkconfigproxy.proto
                 ncproxygrpc/v1/networkconfigproxy.proto
@@ -161,19 +179,12 @@ stages:
 
           - task: CopyFiles@2
             inputs:
-              sourceFolder: "pkg/ncproxy"
+              sourceFolder: $(Build.SourcesDirectory)/Microsoft.hcsshim/pkg/ncproxy
               contents: |
                 nodenetsvc/v0/nodenetsvc.proto
                 nodenetsvc/v1/nodenetsvc.proto
               targetFolder: "$(outDir)"
             displayName: Copy nodenetsvc api files
-
-          - bash: |
-              set -eoux
-
-              apt-get update
-              apt-get install -y libkmod-dev
-            displayName: Download dependencies for building init script
 
           - script: |
               set -eoux
@@ -203,10 +214,72 @@ stages:
               GOOS: linux
               OUT_DIR: "$(outDir)"
             displayName: build opengcs
+            workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
 
-          - template: .pipelines/templates/build/go-licenses.yml@cplat
+          - script: | 
+              set -eoux
+
+              apt-get -y install rpm 
+
+              rpmVersion=`echo ${{ parameters.rpmVersion }} | grep -o "^[^\']*"`
+              if [ -z "$rpmVersion" ] || [ $rpmVersion == '0.0.0' ] ; then
+                gitCommit=$(git rev-parse --short HEAD)
+                rpmVersion=('0.0.0^'$gitCommit)
+              fi
+
+              echo '##vso[task.setvariable variable=rpmVersion]'$rpmVersion
+            displayName: Set RPM version string 
+            workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
+
+          - script: |
+              set -eoux              
+
+              artifactName="containerplat-gcs-$(rpmVersion)"
+              tar -czvf $OUT_DIR/$artifactName.tar.gz --transform s,^,$artifactName/, .
+              
+              # Copy the hcsshim tar to the SPECS dir so that the build tooling can find it 
+              # when building the spec.
+              cp $OUT_DIR/$artifactName.tar.gz SPECS/containerplat-gcs
+            env:
+              OUT_DIR: "$(Build.StagingDirectory)/out"
+            displayName: Tar sources
+            workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
+          
+          - script: |
+              set -eoux
+
+              sed -i "s/@@@BUILD_VERSION_HERE@@@/$(rpmVersion)/g" SPECS/containerplat-gcs/containerplat-gcs.spec
+            env:
+              OUT_DIR: "$(Build.StagingDirectory)/out"
+            displayName: Update SPEC file
+            workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
+
+          - template: .pipelines/templates/azurelinux/install-toolkit.yml@ContainerPlatform
+            parameters:
+              azurelinuxDir: $(Agent.TempDirectory)/azurelinux
+              azurelinuxVersion: 2.0-stable
+              chrootDir: "/temp/DockerStage"
+              outDir: "/tmp/mariner/out"
+
+          - template: .pipelines/templates/azurelinux/build-specs.yml@ContainerPlatform
+            parameters:
+              azurelinuxDir: $(Agent.TempDirectory)/azurelinux
+              specsDir: $(Build.SourcesDirectory)/Microsoft.hcsshim/SPECS
+              chrootDir: "/temp/DockerStage"
+              outDir: "/tmp/mariner/out"
+
+          - script: |
+              set -eoux
+
+              cp -r /tmp/mariner/out/RPMS $OUT_DIR/
+            env:
+              OUT_DIR: $(outDir)
+            displayName: Output containerplat-gcs RPM 
+
+          - template: .pipelines/templates/build/go-licenses.yml@ContainerPlatform
             parameters:
               outputDirectory: "$(Agent.TempDirectory)/windows-notices"
+              sourcesDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
               components:
                 - github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1
                 - github.com/Microsoft/hcsshim/cmd/runhcs
@@ -218,22 +291,23 @@ stages:
                 - github.com/Microsoft/hcsshim/internal/tools/zapdir
                 - github.com/Microsoft/hcsshim/internal/tools/grantvmgroupaccess
 
-          - template: .pipelines/templates/build/go-licenses.yml@cplat
+          - template: .pipelines/templates/build/go-licenses.yml@ContainerPlatform
             parameters:
               outputDirectory: "$(Agent.TempDirectory)/linux-notices"
+              sourcesDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
               targetOS: linux
               components:
                 - github.com/Microsoft/hcsshim/cmd/tar2ext4
                 - github.com/Microsoft/hcsshim/cmd/gcs
                 - github.com/Microsoft/hcsshim/cmd/gcstools
 
-          - template: .pipelines/templates/build/combine-go-licenses.yml@cplat
+          - template: .pipelines/templates/build/combine-go-licenses.yml@ContainerPlatform
             parameters:
               outputDirectory: "$(outDir)/notices"
               inputDirectories:
                 - "$(Agent.TempDirectory)/windows-notices"
                 - "$(Agent.TempDirectory)/linux-notices"
 
-      - template: .pipelines/templates/build/sign.yml@cplat
+      - template: .pipelines/templates/build/sign.yml@ContainerPlatform
         parameters:
           parentJob: build

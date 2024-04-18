@@ -13,6 +13,11 @@ schedules:
         - main
     always: true
 
+parameters:
+  - name: rpmVersion
+    type: string 
+    default: "0.0.0"
+
 variables:
   - template: common-variables.yml@self
 
@@ -20,14 +25,13 @@ variables:
   # https://eng.ms/docs/cloud-ai-platform/devdiv/one-engineering-system-1es/1es-docs/codeql/codeql-codeql3000-faq#can-we-integrate-codeql-to-run-on-individual-prs
   - name: Codeql.AnalyzeInPipeline
     value: $[startsWith(variables['Build.SourceBranch'], 'refs/pull/')]
-
 resources:
   repositories:
     - repository: ob-templates
       type: git
       name: OneBranch.Pipelines/GovernedTemplates
       ref: refs/heads/main
-    - repository: cplat
+    - repository: ContainerPlatform
       type: git
       name: ContainerPlatform/ContainerPlatform
       ref: refs/heads/main
@@ -67,5 +71,13 @@ extends:
       tsa:
         configFile: $(Build.SourcesDirectory)/.config/tsaoptions.json
 
+    featureFlags:
+      mariner:
+        extraMounts: true
+        extraToolchainMounts: true
+        chroot: /temp/DockerStage/docker-chroot-
+        chrootSuffixes: [1, 2, 3, 4 ,5, 6, 7, 8, 9, 10, 11, 12]
     stages:
       - template: shared-build-stages.yml@self
+        parameters:
+          rpmVersion: ${{ parameters.rpmVersion }}
