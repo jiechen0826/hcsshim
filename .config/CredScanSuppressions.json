@@ -2,8 +2,12 @@
     "tool": "Credential Scanner",
     "suppressions": [
         {
-            "placeholder": "--- REDACTED ---",
-            "_justification": "Not a real credential."
+            "file": [
+                "google.golang.org\\grpc\\README.md",
+                "github.com\\veraison\\go-cose\\README.md",
+                "github.com\\docker\\docker\\api\\swagger.yaml"
+            ],
+            "_justification": "False positive in vendored code"
         }
     ]
 }

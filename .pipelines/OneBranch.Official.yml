@@ -28,6 +28,10 @@ extends:
         tsaEnabled: true
         tsaOptionsPath: $(Build.SourcesDirectory)/.config/tsaoptions.json
 
+      # https://eng.ms/docs/products/onebranch/securitycompliancegovernanceandpolicies/sdlforcontainerizedworkflows/credscan
+      credscan:
+        suppressionsFile: $(Build.SourcesDirectory)/.config/CredScanSuppressions.json
+
       # https://eng.ms/docs/products/onebranch/securitycompliancegovernanceandpolicies/sdlforcontainerizedworkflows/customizesdlforcontainerbuilds
       policheck:
         exclusionsFile: $(Build.SourcesDirectory)/.config/PolicheckExclusion.xml
