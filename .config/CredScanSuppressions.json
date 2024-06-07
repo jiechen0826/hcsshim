@@ -3,7 +3,7 @@
     "suppressions": [
         {
             "file": [
-                "google.golang.org\\grpc\\README.md",
+                "github.com\\google\\go-containerregistry\\pkg\\authn\\README.md",
                 "github.com\\veraison\\go-cose\\README.md",
                 "github.com\\docker\\docker\\api\\swagger.yaml"
             ],
