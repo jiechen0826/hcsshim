@@ -17,7 +17,7 @@ resources:
       type: git
       name: OneBranch.Pipelines/GovernedTemplates
       ref: refs/heads/main
-    - repository: cplat
+    - repository: ContainerPlatform
       type: git
       name: ContainerPlatform/ContainerPlatform
       ref: refs/heads/main
@@ -29,7 +29,14 @@ extends:
       suppression:
         suppressionFile: $(Build.SourcesDirectory)\.config\.gdnsuppress
         suppressionSet: default
+    featureFlags:
+      mariner:
+        extraMounts: true
+        extraToolchainMounts: true
+        chroot: /temp/DockerStage/docker-chroot-
+        chrootSuffixes: [1, 2, 3, 4 ,5, 6, 7, 8, 9, 10, 11, 12]
     stages:
       - template: shared-build-stages.yml@self
         parameters:
           Nightly: true
+          rpmVersion: ""

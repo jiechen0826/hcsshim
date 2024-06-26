@@ -1,16 +1,20 @@
 trigger:
   - main
 
+parameters:
+  - name: rpmVersion
+    type: string 
+    default: "0.0.0"
+
 variables:
   - template: common-variables.yml@self
-
 resources:
   repositories:
     - repository: ob-templates
       type: git
       name: OneBranch.Pipelines/GovernedTemplates
       ref: refs/heads/main
-    - repository: cplat
+    - repository: ContainerPlatform
       type: git
       name: ContainerPlatform/ContainerPlatform
       ref: refs/heads/main
@@ -49,5 +53,13 @@ extends:
       tsa: # TSA is always enabled during source analysis stage for official builds
         configFile: $(Build.SourcesDirectory)/.config/tsaoptions.json
 
+    featureFlags:
+      mariner:
+        extraMounts: true
+        extraToolchainMounts: true
+        chroot: /temp/DockerStage/docker-chroot-
+        chrootSuffixes: [1, 2, 3, 4 ,5, 6, 7, 8, 9, 10, 11, 12]
     stages:
       - template: shared-build-stages.yml@self
+        parameters:
+          rpmVersion: ${{ parameters.rpmVersion }}
