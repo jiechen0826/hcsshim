@@ -33,20 +33,12 @@ Provides: %{name}-dev = %{version}-%{release}
 %description dev 
 This package contains additional utilities for testing.
 
-%package snp 
-Summary: Package for confidential containers. 
-Requires: %{name} = %{version}-%{release} 
-Provides: %{name}-snp = %{version}-%{release} 
-
-%description snp 
-This package contains the gcs and additional components needed for Confidential containers.
- 
 %prep
 %setup -q -n %{name}-%{version}
 
 %build
-make out/delta.tar.gz out/delta-dev.tar.gz out/delta-snp.tar.gz
- 
+make out/delta.tar.gz out/delta-dev.tar.gz 
+
 %install
 mkdir -p %{buildroot}%{_bindir}
 mkdir -p %{buildroot}/info/
@@ -66,14 +58,6 @@ install -m 755 -p delta/init %{buildroot}/init
 mkdir delta-dev
 tar -xvf out/delta-dev.tar.gz -C delta-dev
 install -m 755 -p delta-dev/bin/snp-report %{buildroot}%{_bindir}/snp-report
-
-mkdir delta-snp 
-tar -xvf out/delta-snp.tar.gz -C delta-snp 
-install -m 755 -p delta-snp/startup_v2056.sh %{buildroot}/startup_v2056.sh
-install -m 755 -p delta-snp/startup_simple.sh %{buildroot}/startup_simple.sh
-install -m 755 -p delta-snp/startup.sh %{buildroot}/startup.sh
-install -m 755 -p delta-snp/bin/snp-report %{buildroot}%{_bindir}/snp-report
-
 
 %files
 %{_bindir}/gcs 
@@ -97,18 +81,3 @@ install -m 755 -p delta-snp/bin/snp-report %{buildroot}%{_bindir}/snp-report
 /info/gcs.branch
 /info/gcs.commit
 /init
-
-%files snp
-%{_bindir}/gcs 
-%{_bindir}/gcstools 
-%{_bindir}/generichook 
-%{_bindir}/install-drivers 
-%{_bindir}/vsockexec 
-%{_bindir}/wait-paths 
-%{_bindir}/snp-report
-/info/gcs.branch
-/info/gcs.commit
-/init
-/startup_v2056.sh
-/startup_simple.sh
-/startup.sh
