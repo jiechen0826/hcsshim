@@ -37,7 +37,7 @@ This package contains additional utilities for testing.
 %setup -q -n %{name}-%{version}
 
 %build
-make out/delta.tar.gz out/delta-dev.tar.gz 
+make KMOD=1 out/delta.tar.gz out/delta-dev.tar.gz 
 
 %install
 mkdir -p %{buildroot}%{_bindir}
