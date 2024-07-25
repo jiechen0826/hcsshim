@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/Microsoft/go-winio/pkg/guid"
 	"github.com/sirupsen/logrus"
 	"go.opencensus.io/trace"
 	"golang.org/x/sys/windows"
@@ -105,6 +106,22 @@ type Options struct {
 
 	// 	AdditionalHyperVConfig are extra Hyper-V socket configurations to provide.
 	AdditionalHyperVConfig map[string]hcsschema.HvSocketServiceConfig
+
+	// The following options are for implicit vNUMA topology settings.
+	// MaxSizePerNode is the maximum size of memory per vNUMA node.
+	MaxSizePerNode uint64
+	// MaxProcessorsPerNumaNode is the maximum number of processors per vNUMA node.
+	MaxProcessorsPerNumaNode uint32
+	// PhysicalNumaNodes are the preferred physical NUMA nodes to map to vNUMA nodes.
+	PreferredPhysicalNumaNodes []uint32
+
+	// The following options are for explicit vNUMA topology settings.
+	// NumaMappedPhysicalNodes are the physical NUMA nodes mapped to vNUMA nodes.
+	NumaMappedPhysicalNodes []uint32
+	// NumaProcessorCounts are the number of processors per vNUMA node.
+	NumaProcessorCounts []uint32
+	// NumaMemoryBlocksCounts are the number of memory blocks per vNUMA node.
+	NumaMemoryBlocksCounts []uint64
 }
 
 // Verifies that the final UVM options are correct and supported.
@@ -174,6 +191,13 @@ func (uvm *UtilityVM) ID() string {
 	return uvm.hcsSystem.ID()
 }
 
+// RuntimeID returns Hyper-V VM GUID.
+//
+// Only valid after the utility VM has been created.
+func (uvm *UtilityVM) RuntimeID() guid.GUID {
+	return uvm.runtimeID
+}
+
 // OS returns the operating system of the utility VM.
 func (uvm *UtilityVM) OS() string {
 	return uvm.operatingSystem
@@ -226,15 +250,6 @@ func (uvm *UtilityVM) CloseCtx(ctx context.Context) (err error) {
 	windows.Close(uvm.vmmemProcess)
 
 	if uvm.hcsSystem != nil {
-		for key, dev := range uvm.vpciDevices {
-			// Try to remove any devices that are still on the UVM, but do not
-			// fail the close if there is an error.
-			// This would be devices that were added on pod creation.
-			if err := dev.Release(ctx); err != nil {
-				log.G(ctx).Errorf("graceful removal of vpci device %v failed: %s", key, err)
-			}
-		}
-
 		_ = uvm.hcsSystem.Terminate(ctx)
 		// uvm.Wait() waits on <-uvm.outputProcessingDone, which may not be closed until below
 		// (for a Create -> Stop without a Start), or uvm.outputHandler may be blocked on IO and
