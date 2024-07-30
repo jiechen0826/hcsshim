@@ -89,6 +89,12 @@ stages:
             parameters:
               containerImage: linux_build_container
 
+          - powershell: | 
+              # don't ignore errors since we rely on this versioning for debugging in the package
+              ./scripts/Set-VersionInfo.ps1
+            displayName: Set binary embeded information
+            workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
+
           - script: |
               set -eux
 
