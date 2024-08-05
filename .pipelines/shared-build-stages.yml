@@ -8,7 +8,7 @@ parameters:
     type: boolean
     default: false
   - name: rpmVersion
-    type: string 
+    type: string
 
 stages:
   - stage: build_repo
@@ -27,11 +27,14 @@ stages:
           testDir: "$(outDir)/test"
           srcDir: "$(outDir)/src"
 
-          # We explicitly checkout this repo, so no need for OB to do it for us. 
+          # We explicitly checkout this repo, so no need for OB to do it for us.
           ob_git_checkout: false
           ob_git_skip_checkout_none: true
 
           ob_outputDirectory: "$(Build.StagingDirectory)"
+
+          # ignore ContainerPlatform repo during component governance scan, since we don't build from it
+          ob_sdl_cg_ignoreDirectories: "$(Build.SourcesDirectory)/ContainerPlatform"
 
         steps:
           - script: |
@@ -48,10 +51,10 @@ stages:
 
           - checkout: self
             fetchTags: true
-            displayName: Checkout self 
+            displayName: Checkout self
 
           # Checkout ContainerPlatform so that the azurelinux build templates from ContainerPlatform
-          # can access the right script files. 
+          # can access the right script files.
           - checkout: ContainerPlatform
             displayName: Checkout ContainerPlatform
 
@@ -89,7 +92,7 @@ stages:
             parameters:
               containerImage: linux_build_container
 
-          - powershell: | 
+          - powershell: |
               # don't ignore errors since we rely on this versioning for debugging in the package
               ./scripts/Set-VersionInfo.ps1
             displayName: Set binary embeded information
@@ -222,10 +225,10 @@ stages:
             displayName: build opengcs
             workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
 
-          - script: | 
+          - script: |
               set -eoux
 
-              apt-get -y install rpm 
+              apt-get -y install rpm
 
               rpmVersion=`echo ${{ parameters.rpmVersion }} | grep -o "^[^\']*"`
               if [ -z "$rpmVersion" ] || [ $rpmVersion == '0.0.0' ] ; then
@@ -234,23 +237,23 @@ stages:
               fi
 
               echo '##vso[task.setvariable variable=rpmVersion]'$rpmVersion
-            displayName: Set RPM version string 
+            displayName: Set RPM version string
             workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
 
           - script: |
-              set -eoux              
+              set -eoux
 
               artifactName="containerplat-gcs-$(rpmVersion)"
               tar -czvf $OUT_DIR/$artifactName.tar.gz --transform s,^,$artifactName/, .
-              
-              # Copy the hcsshim tar to the SPECS dir so that the build tooling can find it 
+
+              # Copy the hcsshim tar to the SPECS dir so that the build tooling can find it
               # when building the spec.
               cp $OUT_DIR/$artifactName.tar.gz SPECS/containerplat-gcs
             env:
               OUT_DIR: "$(Build.StagingDirectory)/out"
             displayName: Tar sources
             workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
-          
+
           - script: |
               set -eoux
 
@@ -280,7 +283,7 @@ stages:
               cp -r /tmp/mariner/out/RPMS $OUT_DIR/
             env:
               OUT_DIR: $(outDir)
-            displayName: Output containerplat-gcs RPM 
+            displayName: Output containerplat-gcs RPM
 
           - template: .pipelines/templates/build/go-licenses.yml@ContainerPlatform
             parameters:
