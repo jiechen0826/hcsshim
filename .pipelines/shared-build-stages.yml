@@ -227,9 +227,7 @@ stages:
 
           - script: |
               set -eoux
-
-              apt-get -y install rpm
-
+              
               rpmVersion=`echo ${{ parameters.rpmVersion }} | grep -o "^[^\']*"`
               if [ -z "$rpmVersion" ] || [ $rpmVersion == '0.0.0' ] ; then
                 gitCommit=$(git rev-parse --short HEAD)
