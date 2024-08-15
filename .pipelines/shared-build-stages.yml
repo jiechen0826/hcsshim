@@ -318,3 +318,4 @@ stages:
       - template: .pipelines/templates/build/sign.yml@ContainerPlatform
         parameters:
           parentJob: build
+          checkoutSelf: true # need .config\CredScanSuppressions.json since credscan cannot be skipped
