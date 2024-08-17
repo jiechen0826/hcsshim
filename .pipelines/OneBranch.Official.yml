@@ -54,6 +54,7 @@ extends:
         configFile: $(Build.SourcesDirectory)/.config/tsaoptions.json
 
     featureFlags:
+      EnableCDPxPAT: false
       mariner:
         extraMounts: true
         extraToolchainMounts: true
