@@ -229,9 +229,9 @@ stages:
               set -eoux
               
               rpmVersion=`echo ${{ parameters.rpmVersion }} | grep -o "^[^\']*"`
-              if [ -z "$rpmVersion" ] || [ $rpmVersion == '0.0.0' ] ; then
+              if [ -z "$rpmVersion" ] || [ $rpmVersion == 0.0.0 ] ; then
                 gitCommit=$(git rev-parse --short HEAD)
-                rpmVersion=('0.0.0^'$gitCommit)
+                rpmVersion=(0.0.0^$gitCommit)
               fi
 
               echo '##vso[task.setvariable variable=rpmVersion]'$rpmVersion
