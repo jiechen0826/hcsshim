@@ -30,6 +30,7 @@ extends:
         suppressionFile: $(Build.SourcesDirectory)\.config\.gdnsuppress
         suppressionSet: default
     featureFlags:
+      EnableCDPxPAT: false
       mariner:
         extraMounts: true
         extraToolchainMounts: true
