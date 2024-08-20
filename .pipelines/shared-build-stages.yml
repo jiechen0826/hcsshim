@@ -216,6 +216,7 @@ stages:
               make clean
               make out/delta-snp.tar.gz GO_BUILD_TAGS=rego
               cp out/delta-snp.tar.gz $OUT_DIR
+              make clean
 
             env:
               GOPROXY: off
