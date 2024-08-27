@@ -9,6 +9,8 @@ parameters:
     default: false
   - name: rpmVersion
     type: string
+  - name: azurelinuxVersion
+    type: string
 
 stages:
   - stage: build_repo
@@ -239,6 +241,17 @@ stages:
             displayName: Set RPM version string
             workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
 
+          - script: | 
+              set -eux -o pipefail
+
+              extension="cm2"
+              if [[ ${{ parameters.azurelinuxVersion }} == "3.0"* ]]; then
+                extension="azl3"
+              fi
+
+              echo "##vso[task.setvariable variable=extension]$extension"
+            displayName: Get Azure Linux variables
+
           - script: |
               set -eoux
 
@@ -247,7 +260,7 @@ stages:
 
               # Copy the hcsshim tar to the SPECS dir so that the build tooling can find it
               # when building the spec.
-              cp $OUT_DIR/$artifactName.tar.gz SPECS/containerplat-gcs
+              cp $OUT_DIR/$artifactName.tar.gz RPM/$(extension)/SPECS/containerplat-gcs
             env:
               OUT_DIR: "$(Build.StagingDirectory)/out"
             displayName: Tar sources
@@ -256,7 +269,7 @@ stages:
           - script: |
               set -eoux
 
-              sed -i "s/@@@BUILD_VERSION_HERE@@@/$(rpmVersion)/g" SPECS/containerplat-gcs/containerplat-gcs.spec
+              sed -i "s/@@@BUILD_VERSION_HERE@@@/$(rpmVersion)/g" RPM/$(extension)/SPECS/containerplat-gcs/containerplat-gcs.spec
             env:
               OUT_DIR: "$(Build.StagingDirectory)/out"
             displayName: Update SPEC file
@@ -265,14 +278,14 @@ stages:
           - template: .pipelines/templates/azurelinux/install-toolkit.yml@ContainerPlatform
             parameters:
               azurelinuxDir: $(Agent.TempDirectory)/azurelinux
-              azurelinuxVersion: 2.0-stable
+              azurelinuxVersion: ${{ parameters.azurelinuxVersion }}
               chrootDir: "/temp/DockerStage"
               outDir: "/tmp/mariner/out"
 
           - template: .pipelines/templates/azurelinux/build-specs.yml@ContainerPlatform
             parameters:
               azurelinuxDir: $(Agent.TempDirectory)/azurelinux
-              specsDir: $(Build.SourcesDirectory)/Microsoft.hcsshim/SPECS
+              specsDir: $(Build.SourcesDirectory)/Microsoft.hcsshim/RPM/$(extension)/SPECS
               chrootDir: "/temp/DockerStage"
               outDir: "/tmp/mariner/out"
 
