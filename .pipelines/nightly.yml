@@ -40,4 +40,5 @@ extends:
       - template: shared-build-stages.yml@self
         parameters:
           Nightly: true
-          rpmVersion: ""
+          rpmVersion: "0.0.0"
+          azurelinuxVersion: "2.0-stable"

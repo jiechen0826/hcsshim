@@ -5,6 +5,9 @@ parameters:
   - name: rpmVersion
     type: string 
     default: "0.0.0"
+  - name: azurelinuxVersion
+    type: string 
+    default: "2.0-stable"
 
 variables:
   - template: common-variables.yml@self
@@ -64,3 +67,4 @@ extends:
       - template: shared-build-stages.yml@self
         parameters:
           rpmVersion: ${{ parameters.rpmVersion }}
+          azurelinuxVersion: ${{ parameters.azurelinuxVersion }}
