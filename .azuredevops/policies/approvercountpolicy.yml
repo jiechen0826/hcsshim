@@ -1,0 +1,23 @@
+# See:
+# https://eng.ms/docs/cloud-ai-platform/devdiv/one-engineering-system-1es/1es-docs/policy-service/policy-as-code/approver-count-policy-overview
+
+name: approver_count
+description: Approver count policy for msazure/ContainerPlatform/Microsoft.hcsshim repository
+resource: repository
+where:
+configuration:
+  approverCountPolicySettings:
+    isBlocking: true
+    requireMinimumApproverCount: 2
+    creatorVoteCounts: false
+    allowDownvotes: false
+    sourcePushOptions:
+      resetOnSourcePush: false
+      requireVoteOnLastIteration: true
+      requireVoteOnEachIteration: false
+      resetRejectionsOnSourcePush: false
+    blockLastPusherVote: true
+    branchNames:
+      - refs/heads/main
+      - refs/heads/release/*
+    displayName: msazure/ContainerPlatform/Microsoft.hcsshim Approver Count Policy
