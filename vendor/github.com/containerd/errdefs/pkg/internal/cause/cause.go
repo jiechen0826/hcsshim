@@ -14,21 +14,20 @@
    limitations under the License.
 */
 
-package version
+// Package cause is used to define root causes for errors
+// common to errors packages like grpc and http.
+package cause
 
-import "runtime"
+import "fmt"
 
-var (
-	// Package is filled at linking time
-	Package = "github.com/containerd/containerd"
+type ErrUnexpectedStatus struct {
+	Status int
+}
 
-	// Version holds the complete version number. Filled in at linking time.
-	Version = "1.7.23+unknown"
+const UnexpectedStatusPrefix = "unexpected status "
 
-	// Revision is filled with the VCS (e.g. git) revision being used to build
-	// the program at linking time.
-	Revision = ""
+func (e ErrUnexpectedStatus) Error() string {
+	return fmt.Sprintf("%s%d", UnexpectedStatusPrefix, e.Status)
+}
 
-	// GoVersion is Go tree's version.
-	GoVersion = runtime.Version()
-)
+func (ErrUnexpectedStatus) Unknown() {}
