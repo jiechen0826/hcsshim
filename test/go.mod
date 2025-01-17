@@ -25,13 +25,8 @@ require (
 	go.opencensus.io v0.24.0
 	golang.org/x/sync v0.10.0
 	golang.org/x/sys v0.28.0
-<<<<<<< HEAD
-	google.golang.org/grpc v1.67.0
-	google.golang.org/protobuf v1.34.2
-=======
 	google.golang.org/grpc v1.69.0
 	google.golang.org/protobuf v1.35.2
->>>>>>> 20e8795e (Omnibus dependabot update (#2347))
 	k8s.io/cri-api v0.27.1
 )
 
@@ -116,21 +111,12 @@ require (
 	github.com/xrash/smetrics v0.0.0-20240312152122-5f08fbb34913 // indirect
 	github.com/yashtewari/glob-intersection v0.2.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.53.0 // indirect
-<<<<<<< HEAD
-	go.opentelemetry.io/otel v1.28.0 // indirect
-	go.opentelemetry.io/otel/metric v1.28.0 // indirect
-	go.opentelemetry.io/otel/sdk v1.28.0 // indirect
-	go.opentelemetry.io/otel/trace v1.28.0 // indirect
-	golang.org/x/crypto v0.31.0 // indirect
-	golang.org/x/mod v0.17.0 // indirect
-=======
 	go.opentelemetry.io/otel v1.31.0 // indirect
 	go.opentelemetry.io/otel/metric v1.31.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.31.0 // indirect
 	go.opentelemetry.io/otel/trace v1.31.0 // indirect
 	golang.org/x/crypto v0.31.0 // indirect
 	golang.org/x/mod v0.18.0 // indirect
->>>>>>> 20e8795e (Omnibus dependabot update (#2347))
 	golang.org/x/net v0.33.0 // indirect
 	golang.org/x/text v0.21.0 // indirect
 	google.golang.org/genproto v0.0.0-20240401170217-c3f982113cda // indirect
