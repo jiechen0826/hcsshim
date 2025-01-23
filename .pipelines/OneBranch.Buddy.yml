@@ -15,10 +15,10 @@ schedules:
 
 parameters:
   - name: rpmVersion
-    type: string 
+    type: string
     default: "0.0.0"
   - name: azurelinuxVersion
-    type: string 
+    type: string
     default: "2.0-stable"
 
 variables:
@@ -28,6 +28,7 @@ variables:
   # https://eng.ms/docs/cloud-ai-platform/devdiv/one-engineering-system-1es/1es-docs/codeql/codeql-codeql3000-faq#can-we-integrate-codeql-to-run-on-individual-prs
   - name: Codeql.AnalyzeInPipeline
     value: $[startsWith(variables['Build.SourceBranch'], 'refs/pull/')]
+
 resources:
   repositories:
     - repository: ob-templates
@@ -42,8 +43,19 @@ resources:
 extends:
   template: v2/OneBranch.NonOfficial.CrossPlat.yml@ob-templates
   parameters:
+    # Need to use OneBranch's checkout so that repo config files are available for CodeQL and other tools.
+    # However, having two checkout "groups" means the ADO multi-repo logic does not apply, so manually
+    # update the checkout path (which must be relative to $(Pipeline.Workspace)).
+    # Can't checkout directly to sources directory because subsequent ContainerPlatform checkout will be inside it.
+    #
+    # !NOTE: If only one repo is checked out (e.g., the signing stage), then `$(Build.SourcesDirectory)` is
+    # that repo's full path, not `$(Pipeline.Workspace)/s`
+    git:
+      path: "s/Microsoft.hcsshim"
+
     globalSdl: # https://aka.ms/obpipelines/sdl
       codeql: # https://aka.ms/codeql3000-faq
+        # !Note: can't use a codeql3000.yml file since it must be at the repo root, which is not true for the build stage
         compiled:
           # enable CodeQL on main and PR branches
           ${{ if or( eq(variables['Build.SourceBranch'], 'refs/heads/main'), startsWith(variables['Build.SourceBranch'], 'refs/pull/') ) }}:
@@ -52,20 +64,20 @@ extends:
             enabled: false
         buildIdentifier: hcsshim
         cadence: 72
-        excludePathPatterns: "vendor,test"
+        language: go,powershell
+        sourceRoot: "$(Pipeline.Workspace)/s/Microsoft.hcsshim"
         tsaEnabled: false
-        tsaOptionsPath: $(Build.SourcesDirectory)/.config/tsaoptions.json
 
       # https://eng.ms/docs/products/onebranch/securitycompliancegovernanceandpolicies/sdlforcontainerizedworkflows/credscan
       credscan:
-        suppressionsFile: $(Build.SourcesDirectory)/.config/CredScanSuppressions.json
+        suppressionsFile: $(Pipeline.Workspace)/s/Microsoft.hcsshim/.config/CredScanSuppressions.json
 
       # https://eng.ms/docs/products/onebranch/securitycompliancegovernanceandpolicies/sdlforcontainerizedworkflows/customizesdlforcontainerbuilds
       policheck:
-        exclusionsFile: $(Build.SourcesDirectory)/.config/PolicheckExclusion.xml
+        exclusionsFile: $(Pipeline.Workspace)/s/Microsoft.hcsshim/.config/PolicheckExclusion.xml
 
       suppression:
-        suppressionFile: $(Build.SourcesDirectory)\.config\.gdnsuppress
+        suppressionFile: $(Pipeline.Workspace)/s/Microsoft.hcsshim/.config/.gdnsuppress
         suppressionSet: default
 
       # skip for buddy builds
@@ -76,7 +88,7 @@ extends:
         enabled: true
 
       tsa:
-        configFile: $(Build.SourcesDirectory)/.config/tsaoptions.json
+        configFile: $(Pipeline.Workspace)/s/Microsoft.hcsshim/.config/tsaoptions.json
 
     featureFlags:
       EnableCDPxPAT: false
@@ -85,6 +97,7 @@ extends:
         extraToolchainMounts: true
         chroot: /temp/DockerStage/docker-chroot-
         chrootSuffixes: [1, 2, 3, 4 ,5, 6, 7, 8, 9, 10, 11, 12]
+
     stages:
       - template: shared-build-stages.yml@self
         parameters:

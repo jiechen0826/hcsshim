@@ -26,16 +26,23 @@ extends:
   template: v2/OneBranch.NonOfficial.CrossPlat.yml@ob-templates
   parameters:
     globalSdl:
+      codeql: # https://aka.ms/codeql3000-faq
+        compiled:
+          enabled: false
+        tsaEnabled: false
+
       suppression:
-        suppressionFile: $(Build.SourcesDirectory)\.config\.gdnsuppress
+        suppressionFile: $(Pipeline.Workspace)/s/Microsoft.hcsshim/.config/.gdnsuppress
         suppressionSet: default
+
     featureFlags:
       EnableCDPxPAT: false
       mariner:
         extraMounts: true
         extraToolchainMounts: true
         chroot: /temp/DockerStage/docker-chroot-
-        chrootSuffixes: [1, 2, 3, 4 ,5, 6, 7, 8, 9, 10, 11, 12]
+        chrootSuffixes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+
     stages:
       - template: shared-build-stages.yml@self
         parameters:

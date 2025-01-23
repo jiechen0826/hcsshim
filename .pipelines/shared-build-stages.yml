@@ -29,10 +29,8 @@ stages:
           testDir: "$(outDir)/test"
           srcDir: "$(outDir)/src"
 
-          # We explicitly checkout this repo, so no need for OB to do it for us.
-          ob_git_checkout: false
-          ob_git_skip_checkout_none: true
-
+          ob_git_fetchTags: true
+          ob_git_fetchDepth: 0
           ob_outputDirectory: "$(Build.StagingDirectory)"
 
           # ignore ContainerPlatform repo during component governance scan, since we don't build from it
@@ -50,10 +48,6 @@ stages:
               go env
               echo "##[endgroup]"
             displayName: "📂 Show Environment"
-
-          - checkout: self
-            fetchTags: true
-            displayName: Checkout self
 
           # Checkout ContainerPlatform so that the azurelinux build templates from ContainerPlatform
           # can access the right script files.
@@ -230,7 +224,7 @@ stages:
 
           - script: |
               set -eoux
-              
+
               rpmVersion=`echo ${{ parameters.rpmVersion }} | grep -o "^[^\']*"`
               if [ -z "$rpmVersion" ] || [ $rpmVersion == 0.0.0 ] ; then
                 gitCommit=$(git rev-parse --short HEAD)
@@ -241,7 +235,7 @@ stages:
             displayName: Set RPM version string
             workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
 
-          - script: | 
+          - script: |
               set -eux -o pipefail
 
               extension="cm2"
