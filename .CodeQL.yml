@@ -1,0 +1,21 @@
+# ADO CodeQL exclusion file
+#
+# See:
+# https://eng.ms/docs/cloud-ai-platform/devdiv/one-engineering-system-1es/1es-docs/codeql/troubleshooting/bugs/generated-library-code
+
+path_classifiers:
+  generated:
+    - "**/*.pb.go"
+    # Auto-generated Syscall files should all have the same name; special cases can be added here.
+    - "**/zsyscall_windows.go"
+
+  library:
+    - "**/vendor"
+
+    # Checked out during pipeline for azurelinux build templates.
+    # Shouldn't be needed since `CodeQL.SourceRoot` should be set to the hcsshim repo, but add for safety.
+    - ContainerPlatform
+
+  test:
+    - "**/test"
+    - "**/*_test.go"
