@@ -1,7 +1,8 @@
 name: CI
 on:
-  - push
-  - pull_request
+  workflow_run:
+    workflows: [Pre-CI]
+    types: [completed]
 
 env:
   GO_BUILD_CMD: 'go build "-ldflags=-s -w" -trimpath'
@@ -13,7 +14,21 @@ env:
   GOTESTSUM_CMD_RAW: "gotestsum --format standard-verbose --debug --raw-command -- go tool test2json -t"
 
 jobs:
+  on-success:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - run: echo 'The triggering workflow passed'
+  on-failure:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    steps:
+      - run:
+          echo 'The triggering workflow failed, hence no permission to continue CI'
+          exit 1
+
   lint:
+    needs: [on-success]
     runs-on: "windows-2022"
     strategy:
       fail-fast: false
@@ -49,6 +64,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
 
   protos:
+    needs: [on-success]
     runs-on: "windows-2022"
 
     env:
@@ -112,6 +128,7 @@ jobs:
         working-directory: "${{ github.workspace }}/go/src/github.com/Microsoft/hcsshim"
 
   verify-vendor:
+    needs: [on-success]
     runs-on: "windows-2022"
     env:
       GOPROXY: "https://proxy.golang.org,direct"
@@ -179,6 +196,7 @@ jobs:
 
   go-gen:
     name: Go Generate
+    needs: [on-success]
     runs-on: "windows-2022"
     steps:
       - name: Checkout
