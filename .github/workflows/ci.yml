@@ -28,6 +28,7 @@ jobs:
           exit 1
 
   lint:
+    needs: [on-success]
     runs-on: "windows-2022"
     strategy:
       fail-fast: false
@@ -63,6 +64,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
 
   protos:
+    needs: [on-success]
     runs-on: "windows-2022"
 
     env:
@@ -126,6 +128,7 @@ jobs:
         working-directory: "${{ github.workspace }}/go/src/github.com/Microsoft/hcsshim"
 
   verify-vendor:
+    needs: [on-success]
     runs-on: "windows-2022"
     env:
       GOPROXY: "https://proxy.golang.org,direct"
@@ -193,6 +196,7 @@ jobs:
 
   go-gen:
     name: Go Generate
+    needs: [on-success]
     runs-on: "windows-2022"
     steps:
       - name: Checkout

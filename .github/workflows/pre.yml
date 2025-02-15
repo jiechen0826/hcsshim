@@ -1,6 +1,5 @@
 name: Pre-CI
 on: 
-  push:
   pull_request_target:
     # branches:
     #   - main # The workflow would be run based on the workflow file of the base branch to protect against malicious workflow in the PR.
