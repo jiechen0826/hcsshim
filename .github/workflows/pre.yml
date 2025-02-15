@@ -1,40 +1,44 @@
+# This workflow is used to download the Linux boot files from the Azure Artifact feed
+# and upload them as artifacts so that they can be used in the proceeding workflow named CI.
+# The workflow runs under previledged mode to allow authentication with Azure.
+# Note that the workflow is run based on the workflow file of the base branch to protect against malicious workflow in the PR.
+
 name: Pre-CI
 on: 
-  push:
   pull_request_target:
-    # branches:
-    #   - main # The workflow would be run based on the workflow file of the base branch to protect against malicious workflow in the PR.
+    branches:
+      - jiechen3/github_runner
 
 env:
   LCOW_ARTIFACT_PROJECT: "ContainerPlatform"
   LCOW_ARTIFACT_FEED: "ContainerPlat-Dev"
   LCOW_ARTIFACT_NAME: "azurelinux-uvm"
   LCOW_ARTIFACT_VERSION: "*.*.*"
-  LINUX_BOOT_FILES_PATH: ${{ github.workspace }}/LinuxBootFiles
 
 jobs:
   # This job downloads the Linux boot files from the Azure Artifact feed and
   # create the rootfs containing the local Linux-GCS. It needs to be run on
   # the 1ES github runner pool in order to access the Azure Artifact feed.
-  donwload-linux-boot-files:
+  download-linux-boot-files:
     runs-on:
-      - ubuntu-latest
-      # - self-hosted
-      # - 1ES.Pool=containerplat-github-runner-pool-east-us-2
-      # - 1ES.ImageOverride=github-mms-ubuntu-22
+      - self-hosted
+      - 1ES.Pool=containerplat-github-runner-pool-east-us-2
+      - 1ES.ImageOverride=github-mms-ubuntu-22
     permissions:
       id-token: write   # This is required for OIDC login (azure/login) to succeed
       contents: read    # This is required for actions/checkout to succeed
     steps:
     - name: Check access
-      if: ${{ github.event.pull_request.author_association != 'COLLABORATOR' && github.event.pull_request.author_association != 'OWNER' }}
+      if: ${{
+          github.event.pull_request.author_association != 'COLLABORATOR' &&
+          github.event.pull_request.author_association != 'OWNER' &&
+          github.event.pull_request.author_association != 'CONTRIBUTOR'
+        }}
       run: |
         echo "Author association: ${{ github.event.pull_request.author_association }}"
-        echo "Pull Request: ${{ github.event.pull_request }}"
-
-        echo "Event not triggered by a collaborator. Will not continue CI."
+        echo "Event not triggered by a owner/collaborator/contributor. Will not continue CI."
         exit 1
-    
+
     # Install Azure CLI and login to Azure
     - name: Azure OIDC Login
       uses: azure/login@v2
