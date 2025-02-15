@@ -21,9 +21,10 @@ jobs:
   # the 1ES github runner pool in order to access the Azure Artifact feed.
   download-linux-boot-files:
     runs-on:
-      - self-hosted
-      - 1ES.Pool=containerplat-github-runner-pool-east-us-2
-      - 1ES.ImageOverride=github-mms-ubuntu-22
+      ubuntu-latest
+      # - self-hosted
+      # - 1ES.Pool=containerplat-github-runner-pool-east-us-2
+      # - 1ES.ImageOverride=github-mms-ubuntu-22
     permissions:
       id-token: write   # This is required for OIDC login (azure/login) to succeed
       contents: read    # This is required for actions/checkout to succeed
