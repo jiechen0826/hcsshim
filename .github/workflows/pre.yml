@@ -1,8 +1,14 @@
+# This workflow is used to download the Linux boot files from the Azure Artifact feed
+# and upload them as artifacts so that they can be used in the proceeding workflow.
+# The workflow runs under previledged mode to allow authentication with Azure. 
+# Do not check out untrusted code (code from any PR) in this workflow. 
+# Note that the workflow is run based on the workflow file of the base branch to protect against malicious workflow in the PR.
+
 name: Pre-CI
 on: 
   pull_request_target:
-    # branches:
-    #   - main # The workflow would be run based on the workflow file of the base branch to protect against malicious workflow in the PR.
+    branches:
+      - jiechen3/github_runner
 
 env:
   LCOW_ARTIFACT_PROJECT: "ContainerPlatform"
