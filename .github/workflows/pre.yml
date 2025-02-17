@@ -1,5 +1,5 @@
 # This workflow is used to download the Linux boot files from the Azure Artifact feed
-# and upload them as artifacts so that they can be used in the proceeding workflow named CI.
+# and upload them as artifacts so that they can be used in the proceeding workflow for running Linux UVM tests.
 # The workflow runs under previledged mode to allow authentication with Azure.
 # Note that the workflow is run based on the workflow file of the base branch to protect against malicious workflow in the PR.
 
@@ -29,14 +29,14 @@ jobs:
       contents: read    # This is required for actions/checkout to succeed
     steps:
     - name: Check access
-      if: ${{
-          github.event.pull_request.author_association != 'COLLABORATOR' &&
+      if: ${{ 
+          github.event.pull_request.author_association != 'COLLABORATOR' && 
           github.event.pull_request.author_association != 'OWNER' &&
           github.event.pull_request.author_association != 'CONTRIBUTOR'
         }}
       run: |
         echo "Author association: ${{ github.event.pull_request.author_association }}"
-        echo "Event not triggered by a owner/collaborator/contributor. Will not continue CI."
+        echo "Event not triggered by an owner/collaborator/contributor. Will not continue CI."
         exit 1
 
     # Install Azure CLI and login to Azure
@@ -47,7 +47,7 @@ jobs:
         tenant-id: "72f988bf-86f1-41af-91ab-2d7cd011db47"
         allow-no-subscriptions: true
 
-    - name: Download Linux artifact from feed
+    - name: Download LCOW artifact from feed
       uses: azure/cli@v2
       with:
         azcliversion: latest
@@ -64,32 +64,31 @@ jobs:
           --version ${{ env.LCOW_ARTIFACT_VERSION }} \
           --path ./downloaded_artifacts
 
-    - name: Show downloaded lcow artifacts
+    - name: Show downloaded LCOW artifacts
       run: find ./downloaded_artifacts -maxdepth 3 -ls
 
-    - name: Create directory for storing linux artifacts
+    - name: Create directory for storing LCOW artifacts
       run: |
-        mkdir -p ./linux_artifacts/
+        mkdir -p ./lcow_artifacts/
 
     - name: Copy Linux kernel and rootfs tar files
       run: |
-        mv ./downloaded_artifacts/LinuxBootFiles/kernel ./linux_artifacts/
-        mv ./downloaded_artifacts/LinuxBootFiles/vmlinux ./linux_artifacts/
-        mv ./downloaded_artifacts/rootfs-*.tar.gz ./linux_artifacts/
+        mv ./downloaded_artifacts/LinuxBootFiles/kernel ./lcow_artifacts/
+        mv ./downloaded_artifacts/LinuxBootFiles/vmlinux ./lcow_artifacts/
+        mv ./downloaded_artifacts/rootfs-*.tar.gz ./lcow_artifacts/
 
     # This is a workaround to overcome the limitation of actions/upload-artifact@v4 used in later jobs.
     # See https://github.com/actions/upload-artifact/tree/v4/?tab=readme-ov-file#permission-loss.
     - name: Tar the files to preserve file permissions prior to upload
       run: |
-        cd linux_artifacts
-        tar -cvf linux_artifacts.tar .
+        tar -cvf lcow_artifacts.tar -C ./lcow_artifacts .
 
     # Upload the Linux boot files so that they can be used in later jobs.
-    - name: Upload Linux artifact
+    - name: Upload LCOW artifact
       uses: actions/upload-artifact@v4
       with:
-        name: linux_artifact
-        path: linux_artifact.tar
+        name: lcow_artifacts
+        path: lcow_artifacts.tar
         if-no-files-found: error
         overwrite: true
         retention-days: 1
