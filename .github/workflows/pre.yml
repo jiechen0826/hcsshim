@@ -1,11 +1,6 @@
 # This workflow is used to download the Linux boot files from the Azure Artifact feed
-<<<<<<< HEAD
-# and upload them as artifacts so that they can be used in the proceeding workflow.
-# The workflow runs under previledged mode to allow authentication with Azure. 
-=======
 # and upload them as artifacts so that they can be used in the proceeding workflow for running Linux UVM tests.
 # The workflow runs under previledged mode to allow authentication with Azure.
->>>>>>> 81a8a9c4395aacccaec072163a05ffa7333bc360
 # Note that the workflow is run based on the workflow file of the base branch to protect against malicious workflow in the PR.
 
 name: Pre-CI
@@ -26,16 +21,9 @@ jobs:
   # the 1ES github runner pool in order to access the Azure Artifact feed.
   download-linux-boot-files:
     runs-on:
-<<<<<<< HEAD
-      ubuntu-latest
-      # - self-hosted
-      # - 1ES.Pool=containerplat-github-runner-pool-east-us-2
-      # - 1ES.ImageOverride=github-mms-ubuntu-22
-=======
       - self-hosted
       - 1ES.Pool=containerplat-github-runner-pool-east-us-2
       - 1ES.ImageOverride=github-mms-ubuntu-22
->>>>>>> 81a8a9c4395aacccaec072163a05ffa7333bc360
     permissions:
       id-token: write   # This is required for OIDC login (azure/login) to succeed
       contents: read    # This is required for actions/checkout to succeed
@@ -48,11 +36,7 @@ jobs:
         }}
       run: |
         echo "Author association: ${{ github.event.pull_request.author_association }}"
-<<<<<<< HEAD
-        echo "Event not triggered by a owner/collaborator/contributor. Will not continue CI."
-=======
         echo "Event not triggered by an owner/collaborator/contributor. Will not continue CI."
->>>>>>> 81a8a9c4395aacccaec072163a05ffa7333bc360
         exit 1
 
     # Install Azure CLI and login to Azure
@@ -63,11 +47,7 @@ jobs:
         tenant-id: "72f988bf-86f1-41af-91ab-2d7cd011db47"
         allow-no-subscriptions: true
 
-<<<<<<< HEAD
-    - name: Download Linux artifact from feed
-=======
     - name: Download LCOW artifact from feed
->>>>>>> 81a8a9c4395aacccaec072163a05ffa7333bc360
       uses: azure/cli@v2
       with:
         azcliversion: latest
@@ -84,20 +64,6 @@ jobs:
           --version ${{ env.LCOW_ARTIFACT_VERSION }} \
           --path ./downloaded_artifacts
 
-<<<<<<< HEAD
-    - name: Show downloaded lcow artifacts
-      run: find ./downloaded_artifacts -maxdepth 3 -ls
-
-    - name: Create directory for storing linux artifacts
-      run: |
-        mkdir -p ./linux_artifacts/
-
-    - name: Copy Linux kernel and rootfs tar files
-      run: |
-        mv ./downloaded_artifacts/LinuxBootFiles/kernel ./linux_artifacts/
-        mv ./downloaded_artifacts/LinuxBootFiles/vmlinux ./linux_artifacts/
-        mv ./downloaded_artifacts/rootfs-*.tar.gz ./linux_artifacts/
-=======
     - name: Show downloaded LCOW artifacts
       run: find ./downloaded_artifacts -maxdepth 3 -ls
 
@@ -110,23 +76,11 @@ jobs:
         mv ./downloaded_artifacts/LinuxBootFiles/kernel ./lcow_artifacts/
         mv ./downloaded_artifacts/LinuxBootFiles/vmlinux ./lcow_artifacts/
         mv ./downloaded_artifacts/rootfs-*.tar.gz ./lcow_artifacts/
->>>>>>> 81a8a9c4395aacccaec072163a05ffa7333bc360
 
     # This is a workaround to overcome the limitation of actions/upload-artifact@v4 used in later jobs.
     # See https://github.com/actions/upload-artifact/tree/v4/?tab=readme-ov-file#permission-loss.
     - name: Tar the files to preserve file permissions prior to upload
       run: |
-<<<<<<< HEAD
-        cd linux_artifacts
-        tar -cvf linux_artifacts.tar .
-
-    # Upload the Linux boot files so that they can be used in later jobs.
-    - name: Upload Linux artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: linux_artifact
-        path: linux_artifact.tar
-=======
         tar -cvf lcow_artifacts.tar -C ./lcow_artifacts .
 
     # Upload the Linux boot files so that they can be used in later jobs.
@@ -135,7 +89,6 @@ jobs:
       with:
         name: lcow_artifacts
         path: lcow_artifacts.tar
->>>>>>> 81a8a9c4395aacccaec072163a05ffa7333bc360
         if-no-files-found: error
         overwrite: true
         retention-days: 1
