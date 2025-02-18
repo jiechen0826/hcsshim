@@ -1,0 +1,13 @@
+name: Pre-CI
+on:
+  - push
+  - pull_request
+
+jobs:
+  check-access:
+    runs-on:
+      - ubuntu-latest
+    steps:
+    - name: Print author association
+      run: |
+        echo "Author association: ${{ github.event.pull_request.author_association }}"

@@ -1,7 +1,9 @@
 name: CI
 on:
-  - push
-  - pull_request
+  workflow_run:
+    workflows: [Pre-CI]
+    types:
+      - completed
 
 env:
   GO_BUILD_CMD: 'go build "-ldflags=-s -w" -trimpath'
