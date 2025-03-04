@@ -1,0 +1,13 @@
+{
+    "tool": "Credential Scanner",
+    "suppressions": [
+        {
+            "file": [
+                "github.com\\google\\go-containerregistry\\pkg\\authn\\README.md",
+                "github.com\\veraison\\go-cose\\README.md",
+                "github.com\\docker\\docker\\api\\swagger.yaml"
+            ],
+            "_justification": "False positive in vendored code"
+        }
+    ]
+}

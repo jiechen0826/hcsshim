@@ -1,0 +1,51 @@
+trigger: none
+
+schedules:
+  - cron: "0 2 * * 2,3,4,5,6" # runs at 7PM PST Mon-Fri
+    displayName: Daily build
+    branches:
+      include:
+        - main
+    always: true
+
+variables:
+  - template: common-variables.yml@self
+
+resources:
+  repositories:
+    - repository: ob-templates
+      type: git
+      name: OneBranch.Pipelines/GovernedTemplates
+      ref: refs/heads/main
+    - repository: ContainerPlatform
+      type: git
+      name: ContainerPlatform/ContainerPlatform
+      ref: refs/heads/main
+
+extends:
+  template: v2/OneBranch.NonOfficial.CrossPlat.yml@ob-templates
+  parameters:
+    globalSdl:
+      codeql: # https://aka.ms/codeql3000-faq
+        compiled:
+          enabled: false
+        tsaEnabled: false
+
+      suppression:
+        suppressionFile: $(Pipeline.Workspace)/s/Microsoft.hcsshim/.config/.gdnsuppress
+        suppressionSet: default
+
+    featureFlags:
+      EnableCDPxPAT: false
+      mariner:
+        extraMounts: true
+        extraToolchainMounts: true
+        chroot: /temp/DockerStage/docker-chroot-
+        chrootSuffixes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+
+    stages:
+      - template: shared-build-stages.yml@self
+        parameters:
+          Nightly: true
+          rpmVersion: "0.0.0"
+          azurelinuxVersion: "2.0-stable"

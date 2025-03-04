@@ -1,0 +1,140 @@
+{
+  "version": "latest",
+  "suppressionSets": {
+    "default": {
+      "name": "default",
+      "createdDate": "2021-06-18 22:27:56Z",
+      "lastUpdatedDate": "2023-04-17 21:09:20Z"
+    }
+  },
+  "results": {
+    "842ce69bbad8a7675f5e8b4b0ecd5d97d0d69b17baf28c89f7feda67c7ca6373": {
+      "signature": "842ce69bbad8a7675f5e8b4b0ecd5d97d0d69b17baf28c89f7feda67c7ca6373",
+      "alternativeSignatures": [
+        "b9a9f7b72b595630c566411e6453900cb745d189761920ef1b6c3492a6c63a98"
+      ],
+      "target": "internal/interop/interop.go",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "semmle",
+      "ruleId": "SM03559",
+      "justification": "Will be fixed later",
+      "createdDate": "2022-03-31 04:49:03Z",
+      "expirationDate": null,
+      "type": null
+    },
+    "4853c9a880472779d98f9f10d78325dd785d9af604ff9a9a4f19a5cf514cb56b": {
+      "signature": "4853c9a880472779d98f9f10d78325dd785d9af604ff9a9a4f19a5cf514cb56b",
+      "alternativeSignatures": [
+        "314e3b48c3e7dffbd6b28ef370586f6bc27880bbf3b29f2d512788b37303320d"
+      ],
+      "target": "internal/jobcontainers/env.go",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "semmle",
+      "ruleId": "SM03559",
+      "justification": "Will be fixed later",
+      "createdDate": "2022-03-31 04:49:03Z",
+      "expirationDate": null,
+      "type": null
+    },
+    "f90ff280360ef05e44c7456e41bfcd2e1d8f1615ed302e54e4163354b0b21e64": {
+      "signature": "f90ff280360ef05e44c7456e41bfcd2e1d8f1615ed302e54e4163354b0b21e64",
+      "alternativeSignatures": [
+        "77021f35fc4cc98578c3bea1214236c95c36792f46c0ff4ddbd4a0b3de204e75"
+      ],
+      "target": "internal/jobcontainers/env.go",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "semmle",
+      "ruleId": "SM03559",
+      "justification": "Will be fixed later",
+      "createdDate": "2022-03-31 04:49:03Z",
+      "expirationDate": null,
+      "type": null
+    },
+    "5612489e14d996937316d2ecf7bc505f659c2f96839f6b9d5a360f41f8c7591c": {
+      "signature": "5612489e14d996937316d2ecf7bc505f659c2f96839f6b9d5a360f41f8c7591c",
+      "alternativeSignatures": [
+        "11a62b3feaf15c1d9d5ff1faeb570e4edf16bd2097acd56442ee181191bded94"
+      ],
+      "target": "internal/wclayer/expandscratchsize.go",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "semmle",
+      "ruleId": "SM03559",
+      "justification": "Will be fixed later",
+      "createdDate": "2022-03-31 04:49:03Z",
+      "expirationDate": null,
+      "type": null
+    },
+    "d38f4db7973f2723c1f34aa00485a305e97e93b6dc6a62892a68681e0ca908a0": {
+      "signature": "d38f4db7973f2723c1f34aa00485a305e97e93b6dc6a62892a68681e0ca908a0",
+      "alternativeSignatures": [
+        "800f762bec529aef32d26aeaef42dd7312e82a75a1e28355772559c643ab5778"
+      ],
+      "target": "internal/wclayer/expandscratchsize.go",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "semmle",
+      "ruleId": "SM03559",
+      "justification": "Will be fixed later",
+      "createdDate": "2022-03-31 04:49:03Z",
+      "expirationDate": null,
+      "type": null
+    },
+    "5ff83290b3df6e3e932145af1488912132041ddbe996cd95e3118e7271407c08": {
+      "signature": "5ff83290b3df6e3e932145af1488912132041ddbe996cd95e3118e7271407c08",
+      "alternativeSignatures": [
+        "abca75d9f6cb98d2bcbe283655128feae1be8949d39c2b5ca58489cd09f664bf"
+      ],
+      "target": "internal/winapi/jobobject.go",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "semmle",
+      "ruleId": "SM03559",
+      "justification": "Will be fixed later",
+      "createdDate": "2022-03-31 04:49:03Z",
+      "expirationDate": null,
+      "type": null
+    },
+    "fce0d3b081dcd57022e21c454036d9c0b967ba9d4b81819120d2943ef38509d3": {
+      "signature": "fce0d3b081dcd57022e21c454036d9c0b967ba9d4b81819120d2943ef38509d3",
+      "alternativeSignatures": [
+        "5129b69a178f237c79354c3930cad71879a93acc44c9b8bba38e9e2aaef33d16"
+      ],
+      "target": "pkg/ociwclayer/import.go",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "semmle",
+      "ruleId": "SM03409",
+      "justification": "Will be fixed later",
+      "createdDate": "2022-03-31 04:49:03Z",
+      "expirationDate": null,
+      "type": null
+    },
+    "38467453a82ac070567fa7a564e3b8b36a01d24941443c6152073b546df6e73a": {
+      "signature": "38467453a82ac070567fa7a564e3b8b36a01d24941443c6152073b546df6e73a",
+      "alternativeSignatures": [
+        "f4f385bf75747e12ee3ca30db3663aa34965f42b9482a928b57ef5f2206dc265"
+      ],
+      "target": "pkg/ociwclayer/import.go",
+      "memberOf": [
+        "default"
+      ],
+      "tool": "semmle",
+      "ruleId": "SM03409",
+      "justification": "Will be fixed later",
+      "createdDate": "2022-03-31 04:49:03Z",
+      "expirationDate": null,
+      "type": null
+    }
+  }
+}

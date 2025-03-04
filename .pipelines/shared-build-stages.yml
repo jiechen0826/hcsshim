@@ -1,0 +1,329 @@
+# Build stages shared between Official, Buddy and nightly builds.
+# For nightly builds, parameters.Nightly will be set to True
+#
+# The parent template must include ContainerPlatform/ContainerPlatform repository with "ContainerPlatform" alias
+
+parameters:
+  - name: Nightly
+    type: boolean
+    default: false
+  - name: rpmVersion
+    type: string
+  - name: azurelinuxVersion
+    type: string
+
+stages:
+  - stage: build_repo
+    jobs:
+      - job: build
+        pool:
+          type: linux
+
+        variables:
+          coverFlags: "-cover -coverpkg=github.com/Microsoft/hcsshim/..."
+          testFlags: "-gcflags=all=-d=checkptr  -tags functional"
+
+          outDir: "$(Build.StagingDirectory)/out"
+          # Where to put the binaries built for testing purposes (not to be confused with testing binaries).
+          # E.g., `containerd-shim-runhcs-v1.exe`, built with code coverage enabled.
+          testDir: "$(outDir)/test"
+          srcDir: "$(outDir)/src"
+
+          ob_git_fetchTags: true
+          ob_git_fetchDepth: 0
+          ob_outputDirectory: "$(Build.StagingDirectory)"
+
+          # ignore ContainerPlatform repo during component governance scan, since we don't build from it
+          ob_sdl_cg_ignoreDirectories: "$(Build.SourcesDirectory)/ContainerPlatform"
+
+        steps:
+          - script: |
+              echo "image: $(LinuxContainerImage)"
+
+              echo "##[group]environment"
+              printenv
+              echo "##[endgroup]"
+
+              echo "##[group]go env"
+              go env
+              echo "##[endgroup]"
+            displayName: "📂 Show Environment"
+
+          # Checkout ContainerPlatform so that the azurelinux build templates from ContainerPlatform
+          # can access the right script files.
+          - checkout: ContainerPlatform
+            displayName: Checkout ContainerPlatform
+
+          # Nightly builds use different versioning scheme
+          - ${{ if not(parameters.Nightly) }}:
+              - template: .pipelines/templates/build/steps/version.yml@ContainerPlatform
+                parameters:
+                  workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
+
+          - ${{ if parameters.Nightly }}:
+              - script: |
+                  set -eux
+
+                  git config user.email "containerplat-dev@microsoft.com"
+                  git config user.name "ContainerPlat"
+                  # Pull upstream changes
+                  git remote add upstream https://github.com/microsoft/hcsshim.git
+                  git fetch upstream
+                  git merge upstream/main
+
+                  # OneBranch custom versioning for nightly builds
+                  gitVersion=$(git rev-parse upstream/main)
+                  timeStamp=$(date --utc +%Y%m%d)
+                  ver=ob-${gitVersion}-nightly-${timeStamp}-$(Build.BuildId)
+                  echo '##vso[task.setvariable variable=versionString]'${ver//\//_}
+                displayName: Merge upstream changes for nightly build
+                workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
+
+              - task: onebranch.pipeline.version@1
+                inputs:
+                  system: "Custom"
+                  customVersion: "$(versionString)"
+
+          - template: .pipelines/templates/build/codeql-go-tracing-workaround.yml@ContainerPlatform
+            parameters:
+              containerImage: linux_build_container
+
+          - powershell: |
+              # don't ignore errors since we rely on this versioning for debugging in the package
+              ./scripts/Set-VersionInfo.ps1
+            displayName: Set binary embeded information
+            workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
+
+          - script: |
+              set -eux
+
+              mkdir -p $OUT_DIR
+
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/runhcs
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/shimdiag
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/tar2ext4
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/device-util
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/ncproxy
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/jobobject-util
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/wclayer
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/zapdir
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/grantvmgroupaccess
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/uvmboot
+
+              GOOS=linux go build -buildmode=pie -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/tar2ext4
+
+              # for testing, we need to build the binaries with code coverage enabled
+              # output those binaries under a `test` directory
+              #
+              # see: https://go.dev/doc/build-cover
+              mkdir -p $(testDir)
+
+              # re-build the shim and binaries that are exec'd from the shim (and containerd)
+              go build -ldflags="-s -w" -trimpath $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1
+              go build -ldflags="-s -w" -trimpath $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/runhcs
+              go build -ldflags="-s -w" -trimpath $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/device-util
+              go build -ldflags="-s -w" -trimpath $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/jobobject-util
+            env:
+              CGO_ENABLED: "0"
+              GOPROXY: off
+              GOFLAGS: -mod=vendor
+              GOOS: windows
+              OUT_DIR: "$(outDir)"
+            displayName: Build hcsshim binaries
+            workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
+
+          - script: |
+              set -eoux
+
+              # cri-containerd.test.exe primarily calls CRI APIs, but enable code coverage regardless
+              go test $(testFlags) $(coverFlags) -c github.com/Microsoft/hcsshim/test/cri-containerd
+              go test $(testFlags) $(coverFlags) -c github.com/Microsoft/hcsshim/test/functional
+              GOOS=linux go test $(testFlags) $(coverFlags) -c github.com/Microsoft/hcsshim/test/gcs
+              go build -o sample-logging-driver.exe cri-containerd/helpers/log.go
+
+              mv ./cri-containerd.test.exe $OUT_DIR
+              mv ./functional.test.exe $OUT_DIR
+              mv ./gcs.test $OUT_DIR
+              mv ./sample-logging-driver.exe $OUT_DIR
+            env:
+              CGO_ENABLED: "0"
+              GOOS: windows
+              OUT_DIR: "$(outDir)"
+              GOFLAGS: -mod=mod
+            workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim/test
+            displayName: Build test binaries
+
+          # code coverage needs the source files to generate the report
+          - task: CopyFiles@2
+            inputs:
+              SourceFolder: $(Build.SourcesDirectory)
+              Contents: |
+                **
+                !.git/**
+                !vendor/**
+              TargetFolder: $(srcDir)
+            displayName: Copy Source Files
+          - task: CopyFiles@2
+            inputs:
+              sourceFolder: $(Build.SourcesDirectory)/Microsoft.hcsshim/test/cri-containerd
+              contents: |
+                *.rego
+                *.json
+              targetFolder: "$(outDir)"
+            displayName: Copy cri-containerd test payload
+
+          - task: CopyFiles@2
+            inputs:
+              sourceFolder: $(Build.SourcesDirectory)/Microsoft.hcsshim/pkg/ncproxy
+              contents: |
+                ncproxygrpc/v0/networkconfigproxy.proto
+                ncproxygrpc/v1/networkconfigproxy.proto
+              targetFolder: "$(outDir)"
+            displayName: Copy ncproxygrpc api files
+
+          - task: CopyFiles@2
+            inputs:
+              sourceFolder: $(Build.SourcesDirectory)/Microsoft.hcsshim/pkg/ncproxy
+              contents: |
+                nodenetsvc/v0/nodenetsvc.proto
+                nodenetsvc/v1/nodenetsvc.proto
+              targetFolder: "$(outDir)"
+            displayName: Copy nodenetsvc api files
+
+          - script: |
+              set -eoux
+
+              make out/delta-dev.tar.gz # First make the linux gcs bits
+              cp out/delta.tar.gz $OUT_DIR
+              cp out/delta-dev.tar.gz $OUT_DIR
+              cp hack/catcpio.sh $OUT_DIR
+
+              # cleanup and rebuild with rego enforcer support
+              make clean
+              make out/delta-dev.tar.gz GO_BUILD_TAGS=rego
+              cp out/delta-dev.tar.gz $OUT_DIR/delta-dev-rego.tar.gz
+
+              # cleanup and rebuild with rego enforcer support for SNP
+              # hack (maksiman): SNP kernel init scripts under boot/ are not setting default policy stance
+              # to deny, so we need to append that parameter here.
+              awk '/^\/init/{$0 = $0 " -initial-policy-stance deny"} 1' boot/startup.sh > boot/startup.sh.new
+              mv boot/startup.sh.new boot/startup.sh
+              make clean
+              make out/delta-snp.tar.gz GO_BUILD_TAGS=rego
+              cp out/delta-snp.tar.gz $OUT_DIR
+              make clean
+
+            env:
+              GOPROXY: off
+              GOFLAGS: -mod=vendor
+              GOOS: linux
+              OUT_DIR: "$(outDir)"
+            displayName: build opengcs
+            workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
+
+          - script: |
+              set -eoux
+
+              rpmVersion=`echo ${{ parameters.rpmVersion }} | grep -o "^[^\']*"`
+              if [ -z "$rpmVersion" ] || [ $rpmVersion == 0.0.0 ] ; then
+                gitCommit=$(git rev-parse --short HEAD)
+                rpmVersion=(0.0.0^$gitCommit)
+              fi
+
+              echo '##vso[task.setvariable variable=rpmVersion]'$rpmVersion
+            displayName: Set RPM version string
+            workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
+
+          - script: |
+              set -eux -o pipefail
+
+              extension="cm2"
+              if [[ ${{ parameters.azurelinuxVersion }} == "3.0"* ]]; then
+                extension="azl3"
+              fi
+
+              echo "##vso[task.setvariable variable=extension]$extension"
+            displayName: Get Azure Linux variables
+
+          - script: |
+              set -eoux
+
+              artifactName="containerplat-gcs-$(rpmVersion)"
+              tar -czvf $OUT_DIR/$artifactName.tar.gz --transform s,^,$artifactName/, .
+
+              # Copy the hcsshim tar to the SPECS dir so that the build tooling can find it
+              # when building the spec.
+              cp $OUT_DIR/$artifactName.tar.gz RPM/$(extension)/SPECS/containerplat-gcs
+            env:
+              OUT_DIR: "$(Build.StagingDirectory)/out"
+            displayName: Tar sources
+            workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
+
+          - script: |
+              set -eoux
+
+              sed -i "s/@@@BUILD_VERSION_HERE@@@/$(rpmVersion)/g" RPM/$(extension)/SPECS/containerplat-gcs/containerplat-gcs.spec
+            env:
+              OUT_DIR: "$(Build.StagingDirectory)/out"
+            displayName: Update SPEC file
+            workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
+
+          - template: .pipelines/templates/azurelinux/install-toolkit.yml@ContainerPlatform
+            parameters:
+              azurelinuxDir: $(Agent.TempDirectory)/azurelinux
+              azurelinuxVersion: ${{ parameters.azurelinuxVersion }}
+              chrootDir: "/temp/DockerStage"
+              outDir: "/tmp/mariner/out"
+
+          - template: .pipelines/templates/azurelinux/build-specs.yml@ContainerPlatform
+            parameters:
+              azurelinuxDir: $(Agent.TempDirectory)/azurelinux
+              specsDir: $(Build.SourcesDirectory)/Microsoft.hcsshim/RPM/$(extension)/SPECS
+              chrootDir: "/temp/DockerStage"
+              outDir: "/tmp/mariner/out"
+
+          - script: |
+              set -eoux
+
+              cp -r /tmp/mariner/out/RPMS $OUT_DIR/
+            env:
+              OUT_DIR: $(outDir)
+            displayName: Output containerplat-gcs RPM
+
+          - template: .pipelines/templates/build/go-licenses.yml@ContainerPlatform
+            parameters:
+              outputDirectory: "$(Agent.TempDirectory)/windows-notices"
+              sourcesDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
+              components:
+                - github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1
+                - github.com/Microsoft/hcsshim/cmd/runhcs
+                - github.com/Microsoft/hcsshim/cmd/shimdiag
+                - github.com/Microsoft/hcsshim/cmd/tar2ext4
+                - github.com/Microsoft/hcsshim/cmd/device-util
+                - github.com/Microsoft/hcsshim/cmd/ncproxy
+                - github.com/Microsoft/hcsshim/cmd/jobobject-util
+                - github.com/Microsoft/hcsshim/internal/tools/zapdir
+                - github.com/Microsoft/hcsshim/internal/tools/grantvmgroupaccess
+
+          - template: .pipelines/templates/build/go-licenses.yml@ContainerPlatform
+            parameters:
+              outputDirectory: "$(Agent.TempDirectory)/linux-notices"
+              sourcesDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
+              targetOS: linux
+              components:
+                - github.com/Microsoft/hcsshim/cmd/tar2ext4
+                - github.com/Microsoft/hcsshim/cmd/gcs
+                - github.com/Microsoft/hcsshim/cmd/gcstools
+
+          - template: .pipelines/templates/build/combine-go-licenses.yml@ContainerPlatform
+            parameters:
+              outputDirectory: "$(outDir)/notices"
+              inputDirectories:
+                - "$(Agent.TempDirectory)/windows-notices"
+                - "$(Agent.TempDirectory)/linux-notices"
+
+      - template: .pipelines/templates/build/sign.yml@ContainerPlatform
+        parameters:
+          parentJob: build
+          checkoutSelf: true # need .config\CredScanSuppressions.json since credscan cannot be skipped

@@ -1,0 +1,19 @@
+#
+# common variables used
+#
+# pipeline needs `ContainerPlatform` git resource
+
+variables:
+  - template: .pipelines/templates/onebranch/images.yml@ContainerPlatform
+
+  # .pipelines/templates/build/go-licenses.yml@ContainerPlatform will run in the default (Linux) container image,
+  # so override it to use the Go image
+  - name: LinuxContainerImage
+    value: $(CPlatGolangLinuxContainerImage)
+
+  # This needs to be removed when if we ever start building container images from this repository
+  - name: DisableDockerDetector
+    value: true
+
+  - name: DisableGoCliScan
+    value: true
