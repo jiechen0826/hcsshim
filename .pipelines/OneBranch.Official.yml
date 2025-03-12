@@ -7,7 +7,7 @@ parameters:
     default: "0.0.0"
   - name: azurelinuxVersion
     type: string
-    default: "2.0-stable"
+    default: "3.0-stable"
 
 variables:
   - template: common-variables.yml@self
