@@ -15,7 +15,61 @@ parameters:
 stages:
   - stage: build_repo
     jobs:
+      - job: compute_next_rpm_version
+        displayName: compute next GCS RPM version
+        pool:
+          type: windows
+          vmImage: 'windows-latest' # has az cli pre-installed
+        variables:
+          # this is needed to avoid pipeline yaml parsing errors
+          ob_outputDirectory: "$(Build.StagingDirectory)"
+        steps:
+          - pwsh: |
+              $ErrorActionPreference = 'Stop'
+              $VerbosePreference = 'Continue'
+              az --version
+              az extension add --name azure-devops
+            displayName: Add Azure DevOps
+
+          - pwsh: |
+              $ErrorActionPreference = 'Stop'
+              $VerbosePreference = 'Continue'
+
+              # Get the latest GCS RPM version published
+              # find the packageId by checking network path in browser developer tools of azurelinux-umv feed page
+              # TODO: once the prod feed is available, make feedId and packageId parameters
+              $rpm = az devops invoke --org "https://dev.azure.com/msazure" `
+                --area packaging --resource packages `
+                --route-parameters project="ContainerPlatform" feedId="ContainerPlat-Dev" packageId="3a0018e5-2df3-45bf-9a93-b302add02cce" `
+                --query-parameters includeAllVersions=$False includeUrls=$False `
+                -o json | ConvertFrom-Json
+              if ( $null -eq $rpm ) {
+                Write-Host "##vso[task.logissue type=error]could not access GCS RPM information"
+                exit 1
+              }
+              Write-Host "##[debug]latest GCS RPM version in azurelinux-uvm feed: $($rpm.versions)"
+
+              [System.Management.Automation.SemanticVersion]$ver = $rpm.versions |
+                  Where-Object { $_.isLatest } |
+                  Select-Object -First 1 -ExpandProperty version
+              if ( $null -eq $ver ) {
+                Write-Host "##vso[task.logissue type=error]could not retrieve latest version"
+                exit 1
+              }
+              Write-Host "##[debug]latest version for GCS RPM: $ver"
+
+              $p =  [Math]::Max($ver.Patch, 0) + 1
+              [string]$ver = "$($ver.Major).$($ver.Minor).$p"
+
+              Write-Host "##[debug]new version for GCS RPM: $ver"
+              Write-Host "##vso[task.setvariable variable=rpmVersion;isoutput=true;]$ver"
+            displayName: Get latest GCS RPM version and compute new version
+            name: setNextRpmVersion
+            env:
+              AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
+
       - job: build
+        dependsOn: compute_next_rpm_version
         pool:
           type: linux
 
@@ -36,6 +90,9 @@ stages:
           # ignore ContainerPlatform repo during component governance scan, since we don't build from it
           ob_sdl_cg_ignoreDirectories: "$(Build.SourcesDirectory)/ContainerPlatform"
 
+          # Map the output variable from previous job into this job
+          # https://learn.microsoft.com/en-us/azure/devops/pipelines/process/variables?view=azure-devops&tabs=yaml%2Cbatch#set-a-multi-job-output-variable
+          nextRpmVersion: $[ dependencies.compute_next_rpm_version.outputs['setNextRpmVersion.rpmVersion'] ]
         steps:
           - script: |
               echo "image: $(LinuxContainerImage)"
@@ -222,16 +279,33 @@ stages:
             displayName: build opengcs
             workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
 
-          - script: |
-              set -eoux
+          - pwsh: |
+              $ErrorActionPreference = 'Stop'
+              $VerbosePreference = 'Continue'
 
-              rpmVersion=`echo ${{ parameters.rpmVersion }} | grep -o "^[^\']*"`
-              if [ -z "$rpmVersion" ] || [ $rpmVersion == 0.0.0 ] ; then
-                gitCommit=$(git rev-parse --short HEAD)
-                rpmVersion=(0.0.0^$gitCommit)
-              fi
+              # If a valid RPM version is provided as a parameter (not empty or "0.0.0"), use it.
+              # Otherwise, compute the next version by incrementing the latest version from the azurelinux-uvm feed.
+              if ( -not [string]::IsNullOrWhitespace('${{ parameters.rpmVersion }}') -and '${{ parameters.rpmVersion }}' -ne '0.0.0' ) {
+                $ver = '${{ parameters.rpmVersion }}'
+                Write-Host "##[debug]using GCS RPM version from user input: $ver"
+                try {
+                  $v = [System.Management.Automation.SemanticVersion]$ver
+                } catch {
+                  Write-Host "##vso[task.logissue type=error]invalid GCS RPM version: $ver"
+                  exit 1
+                }
+                if ( -not [string]::IsNullOrWhitespace($v.BuildLabel) ) {
+                  Write-Host "##vso[task.logissue type=error]specified GCS RPM version $ver contains build label: $($v.BuildLabel)"
+                  exit 1
+                }
+              } else {
+                $ver = '$(nextRpmVersion)'
+                write-host "##[debug]GCS RPM version not specified, getting latest+1 version from azurelinux-uvm feed: $ver"
+              }
 
-              echo '##vso[task.setvariable variable=rpmVersion]'$rpmVersion
+              Write-Host "##[debug]new version for GCS RPM: $ver"
+              Write-Host "##vso[task.setvariable variable=rpmVersion;isoutput=true;]$ver"
+            name: setVersion
             displayName: Set RPM version string
             workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
 
@@ -249,7 +323,7 @@ stages:
           - script: |
               set -eoux
 
-              artifactName="containerplat-gcs-$(rpmVersion)"
+              artifactName="containerplat-gcs-$(setVersion.rpmVersion)"
               tar -czvf $OUT_DIR/$artifactName.tar.gz --transform s,^,$artifactName/, .
 
               # Copy the hcsshim tar to the SPECS dir so that the build tooling can find it
@@ -263,7 +337,7 @@ stages:
           - script: |
               set -eoux
 
-              sed -i "s/@@@BUILD_VERSION_HERE@@@/$(rpmVersion)/g" RPM/$(extension)/SPECS/containerplat-gcs/containerplat-gcs.spec
+              sed -i "s/@@@BUILD_VERSION_HERE@@@/$(setVersion.rpmVersion)/g" RPM/$(extension)/SPECS/containerplat-gcs/containerplat-gcs.spec
             env:
               OUT_DIR: "$(Build.StagingDirectory)/out"
             displayName: Update SPEC file
