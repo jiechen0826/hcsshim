@@ -157,16 +157,18 @@ stages:
               mkdir -p $OUT_DIR
 
               go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/device-util
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/jobobject-util
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/mkuvmcim
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/ncproxy
               go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/runhcs
               go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/shimdiag
               go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/tar2ext4
-              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/device-util
-              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/ncproxy
-              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/jobobject-util
               go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/wclayer
-              go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/zapdir
               go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/grantvmgroupaccess
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/rootfs
               go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/uvmboot
+              go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/zapdir
 
               GOOS=linux go build -buildmode=pie -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/tar2ext4
 
@@ -178,9 +180,9 @@ stages:
 
               # re-build the shim and binaries that are exec'd from the shim (and containerd)
               go build -ldflags="-s -w" -trimpath $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1
-              go build -ldflags="-s -w" -trimpath $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/runhcs
               go build -ldflags="-s -w" -trimpath $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/device-util
               go build -ldflags="-s -w" -trimpath $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/jobobject-util
+              go build -ldflags="-s -w" -trimpath $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/runhcs
             env:
               CGO_ENABLED: "0"
               GOPROXY: off
