@@ -74,8 +74,11 @@ stages:
           type: linux
 
         variables:
+          # strip debugging information and symbols, both for compliance and size
+          # https://liquid.microsoft.com/Web/Object/Read/MS.Security/Requirements/Microsoft.Security.SystemsADM.10202
+          buildFlags: '-ldflags="-s -w" -trimpath'
           coverFlags: "-cover -coverpkg=github.com/Microsoft/hcsshim/..."
-          testFlags: "-gcflags=all=-d=checkptr  -tags functional"
+          testFlags: "-gcflags=all=-d=checkptr -tags functional"
 
           outDir: "$(Build.StagingDirectory)/out"
           # Where to put the binaries built for testing purposes (not to be confused with testing binaries).
@@ -156,19 +159,19 @@ stages:
 
               mkdir -p $OUT_DIR
 
-              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1
-              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/device-util
-              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/jobobject-util
-              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/mkuvmcim
-              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/ncproxy
-              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/runhcs
-              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/shimdiag
-              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/tar2ext4
-              go build -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/wclayer
-              go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/grantvmgroupaccess
-              go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/rootfs
-              go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/uvmboot
-              go build -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/zapdir
+              go build $(buildFlags) -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1
+              go build $(buildFlags) -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/device-util
+              go build $(buildFlags) -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/jobobject-util
+              go build $(buildFlags) -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/mkuvmcim
+              go build $(buildFlags) -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/ncproxy
+              go build $(buildFlags) -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/runhcs
+              go build $(buildFlags) -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/shimdiag
+              go build $(buildFlags) -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/tar2ext4
+              go build $(buildFlags) -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/wclayer
+              go build $(buildFlags) -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/grantvmgroupaccess
+              go build $(buildFlags) -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/rootfs
+              go build $(buildFlags) -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/uvmboot
+              go build $(buildFlags) -o $OUT_DIR github.com/Microsoft/hcsshim/internal/tools/zapdir
 
               GOOS=linux go build -buildmode=pie -o $OUT_DIR github.com/Microsoft/hcsshim/cmd/tar2ext4
 
@@ -179,10 +182,11 @@ stages:
               mkdir -p $(testDir)
 
               # re-build the shim and binaries that are exec'd from the shim (and containerd)
-              go build -ldflags="-s -w" -trimpath $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1
-              go build -ldflags="-s -w" -trimpath $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/device-util
-              go build -ldflags="-s -w" -trimpath $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/jobobject-util
-              go build -ldflags="-s -w" -trimpath $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/runhcs
+              # use `-trimpath` to clean up file names in code coverage results
+              go build $(buildFlags) $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1
+              go build $(buildFlags) $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/device-util
+              go build $(buildFlags) $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/jobobject-util
+              go build $(buildFlags) $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/runhcs
             env:
               CGO_ENABLED: "0"
               GOPROXY: off
@@ -253,14 +257,15 @@ stages:
           - script: |
               set -eoux
 
-              make out/delta-dev.tar.gz # First make the linux gcs bits
+              # First make the linux gcs bits
+              make out/delta-dev.tar.gz GO_FLAGS_EXTRA=-trimpath
               cp out/delta.tar.gz $OUT_DIR
               cp out/delta-dev.tar.gz $OUT_DIR
               cp hack/catcpio.sh $OUT_DIR
 
               # cleanup and rebuild with rego enforcer support
               make clean
-              make out/delta-dev.tar.gz GO_BUILD_TAGS=rego
+              make out/delta-dev.tar.gz GO_BUILD_TAGS=rego GO_FLAGS_EXTRA=-trimpath
               cp out/delta-dev.tar.gz $OUT_DIR/delta-dev-rego.tar.gz
 
               # cleanup and rebuild with rego enforcer support for SNP
@@ -269,7 +274,7 @@ stages:
               awk '/^\/init/{$0 = $0 " -initial-policy-stance deny"} 1' boot/startup.sh > boot/startup.sh.new
               mv boot/startup.sh.new boot/startup.sh
               make clean
-              make out/delta-snp.tar.gz GO_BUILD_TAGS=rego
+              make out/delta-snp.tar.gz GO_BUILD_TAGS=rego GO_FLAGS_EXTRA=-trimpath
               cp out/delta-snp.tar.gz $OUT_DIR
               make clean
 
