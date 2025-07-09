@@ -43,6 +43,24 @@ resources:
 extends:
   template: v2/OneBranch.NonOfficial.CrossPlat.yml@ob-templates
   parameters:
+    containers:
+      # cannot override part of the default value, so replace containers block whole-sale
+      # see: https://onebranch.visualstudio.com/OneBranch.Pipelines/_git/GovernedTemplates?path=/v2/Core.Template.yml
+      - container: windows_build_container
+        image: $(WindowsContainerImage)
+        type: Windows
+      - container: windows_build_container2
+        image: $(WindowsContainerImage2)
+        type: Windows
+      - container: linux_build_container
+        image: $(LinuxContainerImage)
+        type: Linux
+        endpoint: cplatadoimages ACR
+      - container: linux_build_container2
+        image: $(LinuxContainerImage2)
+        type: Linux
+        endpoint: cplatadoimages ACR
+
     # Need to use OneBranch's checkout so that repo config files are available for CodeQL and other tools.
     # However, having two checkout "groups" means the ADO multi-repo logic does not apply, so manually
     # update the checkout path (which must be relative to $(Pipeline.Workspace)).
