@@ -17,6 +17,7 @@ import (
 	specGuest "github.com/Microsoft/hcsshim/internal/guest/spec"
 	"github.com/Microsoft/hcsshim/internal/guestpath"
 	"github.com/Microsoft/hcsshim/internal/oc"
+	"github.com/Microsoft/hcsshim/pkg/annotations"
 )
 
 func getStandaloneRootDir(id string) string {
@@ -133,8 +134,14 @@ func setupStandaloneContainerSpec(ctx context.Context, id string, spec *oci.Spec
 		spec.Mounts = append(spec.Mounts, mt)
 	}
 
-	// Force the parent cgroup into our /containers root
-	spec.Linux.CgroupsPath = "/containers/" + id
+	// Set cgroup path - check if this is part of a virtual pod (unlikely for standalone)
+	if virtualPodID, isVirtualPod := spec.Annotations[annotations.VirtualPodID]; isVirtualPod {
+		// Standalone container in virtual pod (unusual case)
+		spec.Linux.CgroupsPath = "/virtual-pods/" + virtualPodID + "/" + id
+	} else {
+		// Traditional standalone container goes under /containers
+		spec.Linux.CgroupsPath = "/containers/" + id
+	}
 
 	// Clear the windows section as we dont want to forward to runc
 	spec.Windows = nil

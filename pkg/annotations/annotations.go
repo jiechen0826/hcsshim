@@ -218,6 +218,13 @@ const (
 	// case the UVM crashes.
 	DumpDirectoryPath = "io.microsoft.virtualmachine.dump-directory-path"
 
+	// Virtual Pod Annotations for multi-pod support in single UVM
+	// VirtualPodID identifies a virtual pod that shares a UVM with other pods
+	VirtualPodID = "io.microsoft.virtualpod.id"
+
+	// VirtualPodMasterSandboxID specifies the master sandbox ID for a virtual pod
+	VirtualPodMasterSandboxID = "io.microsoft.virtualpod.master.sandboxid"
+
 	// DisableWritableFileShares disables adding any writable fileshares to the UVM.
 	DisableWritableFileShares = "io.microsoft.virtualmachine.fileshares.disablewritable"
 

@@ -294,40 +294,9 @@ func main() {
 	// Continuously log /dev/kmsg
 	go kmsg.ReadForever(kmsg.LogLevel(*kmsgLogLevel))
 
-	tport := &transport.VsockTransport{}
-	rtime, err := runc.NewRuntime(baseLogPath)
-	if err != nil {
-		logrus.WithError(err).Fatal("failed to initialize new runc runtime")
-	}
-	mux := bridge.NewBridgeMux()
-	b := bridge.Bridge{
-		Handler:  mux,
-		EnableV4: *v4,
-	}
-	h := hcsv2.NewHost(rtime, tport, initialEnforcer, logWriter)
-	b.AssignHandlers(mux, h)
-
-	var bridgeIn io.ReadCloser
-	var bridgeOut io.WriteCloser
-	if *useInOutErr {
-		bridgeIn = os.Stdin
-		bridgeOut = os.Stdout
-	} else {
-		const commandPort uint32 = 0x40000000
-		bridgeCon, err := tport.Dial(commandPort)
-		if err != nil {
-			logrus.WithFields(logrus.Fields{
-				"port":          commandPort,
-				logrus.ErrorKey: err,
-			}).Fatal("failed to dial host vsock connection")
-		}
-		bridgeIn = bridgeCon
-		bridgeOut = bridgeCon
-	}
-
 	// Setup the UVM cgroups to protect against a workload taking all available
-	// memory and causing the GCS to malfunction we create two cgroups: gcs,
-	// containers.
+	// memory and causing the GCS to malfunction we create cgroups: gcs,
+	// containers, and virtual-pods for multi-pod support.
 	//
 
 	// Write 1 to memory.use_hierarchy on the root cgroup to enable hierarchy
@@ -357,6 +326,18 @@ func main() {
 	}
 	defer containersControl.Delete() //nolint:errcheck
 
+	// Create virtual-pods cgroup hierarchy for multi-pod support
+	// This will be the parent for all virtual pod cgroups: /virtual-pods/{virtualSandboxID}
+	virtualPodsControl, err := cgroups.New(cgroups.StaticPath("/virtual-pods"), &oci.LinuxResources{
+		Memory: &oci.LinuxMemory{
+			Limit: &containersLimit, // Share the same limit as containers
+		},
+	})
+	if err != nil {
+		logrus.WithError(err).Fatal("failed to create virtual-pods cgroup")
+	}
+	defer virtualPodsControl.Delete() //nolint:errcheck
+
 	gcsControl, err := cgroups.New(cgroups.StaticPath("/gcs"), &oci.LinuxResources{})
 	if err != nil {
 		logrus.WithError(err).Fatal("failed to create gcs cgroup")
@@ -364,6 +345,39 @@ func main() {
 	defer gcsControl.Delete() //nolint:errcheck
 	if err := gcsControl.Add(cgroups.Process{Pid: os.Getpid()}); err != nil {
 		logrus.WithError(err).Fatal("failed add gcs pid to gcs cgroup")
+	}
+
+	tport := &transport.VsockTransport{}
+	rtime, err := runc.NewRuntime(baseLogPath)
+	if err != nil {
+		logrus.WithError(err).Fatal("failed to initialize new runc runtime")
+	}
+	mux := bridge.NewBridgeMux()
+	b := bridge.Bridge{
+		Handler:  mux,
+		EnableV4: *v4,
+	}
+	h := hcsv2.NewHost(rtime, tport, initialEnforcer, logWriter)
+	// Initialize virtual pod support in the host
+	h.InitializeVirtualPodSupport(virtualPodsControl)
+	b.AssignHandlers(mux, h)
+
+	var bridgeIn io.ReadCloser
+	var bridgeOut io.WriteCloser
+	if *useInOutErr {
+		bridgeIn = os.Stdin
+		bridgeOut = os.Stdout
+	} else {
+		const commandPort uint32 = 0x40000000
+		bridgeCon, err := tport.Dial(commandPort)
+		if err != nil {
+			logrus.WithFields(logrus.Fields{
+				"port":          commandPort,
+				logrus.ErrorKey: err,
+			}).Fatal("failed to dial host vsock connection")
+		}
+		bridgeIn = bridgeCon
+		bridgeOut = bridgeCon
 	}
 
 	event := cgroups.MemoryThresholdEvent(*gcsMemLimitBytes, false)
