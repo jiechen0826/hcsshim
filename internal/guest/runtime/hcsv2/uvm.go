@@ -380,7 +380,26 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 					networkNamespace = fmt.Sprintf("virtual-pod-%s", virtualPodID)
 				}
 
-				if err := h.CreateVirtualPod(ctx, virtualPodID, virtualPodID, networkNamespace); err != nil {
+				// Extract memory limit from sandbox container spec
+				var memoryLimit *int64
+				if settings.OCISpecification.Linux != nil &&
+					settings.OCISpecification.Linux.Resources != nil &&
+					settings.OCISpecification.Linux.Resources.Memory != nil &&
+					settings.OCISpecification.Linux.Resources.Memory.Limit != nil {
+					memoryLimit = settings.OCISpecification.Linux.Resources.Memory.Limit
+					logrus.WithFields(logrus.Fields{
+						"containerID":  id,
+						"virtualPodID": virtualPodID,
+						"memoryLimit":  *memoryLimit,
+					}).Info("Extracted memory limit from sandbox container spec")
+				} else {
+					logrus.WithFields(logrus.Fields{
+						"containerID":  id,
+						"virtualPodID": virtualPodID,
+					}).Info("No memory limit found in sandbox container spec")
+				}
+
+				if err := h.CreateVirtualPod(ctx, virtualPodID, virtualPodID, networkNamespace, memoryLimit); err != nil {
 					return nil, errors.Wrapf(err, "failed to create virtual pod %s", virtualPodID)
 				}
 			}
@@ -1347,7 +1366,7 @@ func (h *Host) InitializeVirtualPodSupport(virtualPodsCgroup cgroups.Cgroup) {
 }
 
 // CreateVirtualPod creates a new virtual pod with its own cgroup and network namespace
-func (h *Host) CreateVirtualPod(ctx context.Context, virtualSandboxID, masterSandboxID, networkNamespace string) error {
+func (h *Host) CreateVirtualPod(ctx context.Context, virtualSandboxID, masterSandboxID, networkNamespace string, memoryLimit *int64) error {
 	h.virtualPodsMutex.Lock()
 	defer h.virtualPodsMutex.Unlock()
 
@@ -1359,8 +1378,21 @@ func (h *Host) CreateVirtualPod(ctx context.Context, virtualSandboxID, masterSan
 	// Create cgroup path for this virtual pod
 	cgroupPath := fmt.Sprintf("/virtual-pods/%s", virtualSandboxID)
 
-	// Create the cgroup for this virtual pod
-	cgroupControl, err := cgroups.New(cgroups.StaticPath(cgroupPath), &specs.LinuxResources{})
+	// Create the cgroup for this virtual pod with memory limit if provided
+	resources := &specs.LinuxResources{}
+	if memoryLimit != nil {
+		resources.Memory = &specs.LinuxMemory{
+			Limit: memoryLimit,
+		}
+		logrus.WithFields(logrus.Fields{
+			"virtualSandboxID": virtualSandboxID,
+			"memoryLimit":      *memoryLimit,
+		}).Info("Creating virtual pod with memory limit")
+	} else {
+		logrus.WithField("virtualSandboxID", virtualSandboxID).Info("Creating virtual pod without memory limit")
+	}
+
+	cgroupControl, err := cgroups.New(cgroups.StaticPath(cgroupPath), resources)
 	if err != nil {
 		return errors.Wrapf(err, "failed to create cgroup for virtual pod %s", virtualSandboxID)
 	}
@@ -1386,6 +1418,11 @@ func (h *Host) CreateVirtualPod(ctx context.Context, virtualSandboxID, masterSan
 	}).Info("Virtual pod created successfully")
 
 	return nil
+}
+
+// CreateVirtualPodWithoutMemoryLimit creates a virtual pod without memory limits (backward compatibility)
+func (h *Host) CreateVirtualPodWithoutMemoryLimit(ctx context.Context, virtualSandboxID, masterSandboxID, networkNamespace string) error {
+	return h.CreateVirtualPod(ctx, virtualSandboxID, masterSandboxID, networkNamespace, nil)
 }
 
 // GetVirtualPod retrieves a virtual pod by its virtualSandboxID
