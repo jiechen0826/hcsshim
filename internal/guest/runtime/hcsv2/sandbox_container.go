@@ -23,12 +23,24 @@ func getSandboxHostnamePath(id string) string {
 	return filepath.Join(specGuest.SandboxRootDir(id), "hostname")
 }
 
+func getVirtualPodAwareSandboxHostnamePath(id, virtualSandboxID string) string {
+	return filepath.Join(specGuest.VirtualPodAwareSandboxRootDir(id, virtualSandboxID), "hostname")
+}
+
 func getSandboxHostsPath(id string) string {
 	return filepath.Join(specGuest.SandboxRootDir(id), "hosts")
 }
 
+func getVirtualPodAwareSandboxHostsPath(id, virtualSandboxID string) string {
+	return filepath.Join(specGuest.VirtualPodAwareSandboxRootDir(id, virtualSandboxID), "hosts")
+}
+
 func getSandboxResolvPath(id string) string {
 	return filepath.Join(specGuest.SandboxRootDir(id), "resolv.conf")
+}
+
+func getVirtualPodAwareSandboxResolvPath(id, virtualSandboxID string) string {
+	return filepath.Join(specGuest.VirtualPodAwareSandboxRootDir(id, virtualSandboxID), "resolv.conf")
 }
 
 func setupSandboxContainerSpec(ctx context.Context, id string, spec *oci.Spec) (err error) {
@@ -37,8 +49,11 @@ func setupSandboxContainerSpec(ctx context.Context, id string, spec *oci.Spec) (
 	defer func() { oc.SetSpanStatus(span, err) }()
 	span.AddAttributes(trace.StringAttribute("cid", id))
 
-	// Generate the sandbox root dir
-	rootDir := specGuest.SandboxRootDir(id)
+	// Check if this is a virtual pod to use appropriate root directory
+	virtualSandboxID := spec.Annotations[annotations.VirtualPodID]
+
+	// Generate the sandbox root dir - virtual pod aware
+	rootDir := specGuest.VirtualPodAwareSandboxRootDir(id, virtualSandboxID)
 	if err := os.MkdirAll(rootDir, 0755); err != nil {
 		return errors.Wrapf(err, "failed to create sandbox root directory %q", rootDir)
 	}
@@ -58,14 +73,14 @@ func setupSandboxContainerSpec(ctx context.Context, id string, spec *oci.Spec) (
 		}
 	}
 
-	sandboxHostnamePath := getSandboxHostnamePath(id)
+	sandboxHostnamePath := getVirtualPodAwareSandboxHostnamePath(id, virtualSandboxID)
 	if err := os.WriteFile(sandboxHostnamePath, []byte(hostname+"\n"), 0644); err != nil {
 		return errors.Wrapf(err, "failed to write hostname to %q", sandboxHostnamePath)
 	}
 
 	// Write the hosts
 	sandboxHostsContent := network.GenerateEtcHostsContent(ctx, hostname)
-	sandboxHostsPath := getSandboxHostsPath(id)
+	sandboxHostsPath := getVirtualPodAwareSandboxHostsPath(id, virtualSandboxID)
 	if err := os.WriteFile(sandboxHostsPath, []byte(sandboxHostsContent), 0644); err != nil {
 		return errors.Wrapf(err, "failed to write sandbox hosts to %q", sandboxHostsPath)
 	}
@@ -88,7 +103,7 @@ func setupSandboxContainerSpec(ctx context.Context, id string, spec *oci.Spec) (
 	if err != nil {
 		return errors.Wrap(err, "failed to generate sandbox resolv.conf content")
 	}
-	sandboxResolvPath := getSandboxResolvPath(id)
+	sandboxResolvPath := getVirtualPodAwareSandboxResolvPath(id, virtualSandboxID)
 	if err := os.WriteFile(sandboxResolvPath, []byte(resolvContent), 0644); err != nil {
 		return errors.Wrap(err, "failed to write sandbox resolv.conf")
 	}
@@ -114,9 +129,9 @@ func setupSandboxContainerSpec(ctx context.Context, id string, spec *oci.Spec) (
 	// NODE.
 
 	// Set cgroup path - check if this is a virtual pod
-	if virtualPodID, isVirtualPod := spec.Annotations[annotations.VirtualPodID]; isVirtualPod {
-		// Virtual pod sandbox gets its own cgroup under /virtual-pods
-		spec.Linux.CgroupsPath = "/virtual-pods/" + virtualPodID
+	if virtualSandboxID != "" {
+		// Virtual pod sandbox gets its own cgroup under /virtual-pods using the virtual pod ID
+		spec.Linux.CgroupsPath = "/virtual-pods/" + virtualSandboxID
 	} else {
 		// Traditional sandbox goes under /containers
 		spec.Linux.CgroupsPath = "/containers/" + id

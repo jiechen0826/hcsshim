@@ -210,13 +210,12 @@ const (
 
 	// DisableHostProcessContainer disables the ability to start a host process container (job container in this repository).
 	DisableHostProcessContainer = "microsoft.com/disable-hostprocess-container"
-)
 
-// uVM annotations.
-const (
-	// DumpDirectoryPath provides a path to the directory in which dumps for a UVM will be collected in
-	// case the UVM crashes.
-	DumpDirectoryPath = "io.microsoft.virtualmachine.dump-directory-path"
+	// HostProcessRootfsLocation indicates where the rootfs for a host process container should be located. If file binding support is
+	// available (Windows versions 20H1 and up) this will be the absolute path where the rootfs for a container will be located on the host
+	// and will be unique per container. On < 20H1 hosts, the location will be C:\<path-supplied>\<containerID>. So for example, if the value
+	// supplied was C:\rootfs and the container's ID is 12345678 the rootfs will be located at C:\rootfs\12345678.
+	HostProcessRootfsLocation = "microsoft.com/hostprocess-rootfs-location"
 
 	// Virtual Pod Annotations for multi-pod support in single UVM
 	// VirtualPodID identifies a virtual pod that shares a UVM with other pods
@@ -225,8 +224,9 @@ const (
 	// VirtualPodMasterSandboxID specifies the master sandbox ID for a virtual pod
 	VirtualPodMasterSandboxID = "io.microsoft.virtualpod.master.sandboxid"
 
-	// DisableWritableFileShares disables adding any writable fileshares to the UVM.
-	DisableWritableFileShares = "io.microsoft.virtualmachine.fileshares.disablewritable"
+	// AllowOvercommit indicates if we should allow over commit memory for UVM.
+	// Defaults to true. For physical backed memory, set to false.
+	AllowOvercommit = "io.microsoft.virtualmachine.computetopology.memory.allowovercommit"
 
 	// VirtualMachineKernelDrivers indicates what drivers to install in the pod.
 	// This value should contain a list of comma separated directories containing all
