@@ -15,6 +15,7 @@ import (
 
 	"github.com/Microsoft/hcsshim/internal/guest/network"
 	specGuest "github.com/Microsoft/hcsshim/internal/guest/spec"
+	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oc"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
 )
@@ -85,27 +86,42 @@ func setupSandboxContainerSpec(ctx context.Context, id string, spec *oci.Spec) (
 		return errors.Wrapf(err, "failed to write sandbox hosts to %q", sandboxHostsPath)
 	}
 
+	log.G(ctx).Debug("quick setup network namespace, cflick")
+	if strings.EqualFold(spec.Annotations[annotations.UVMNetworkingSkip], "true") ||
+		strings.EqualFold(spec.Annotations[annotations.PreferExistingUVM], "true") {
+		ns := GetOrAddNetworkNamespace(specGuest.GetNetworkNamespaceID(spec))
+		err := ns.Sync(ctx)
+		if err != nil {
+			return err
+		}
+	}
 	// Write resolv.conf
+	log.G(ctx).Debug("sandbox resolv.conf, cflick")
 	ns, err := getNetworkNamespace(specGuest.GetNetworkNamespaceID(spec))
 	if err != nil {
-		return err
-	}
-	var searches, servers []string
-	for _, n := range ns.Adapters() {
-		if len(n.DNSSuffix) > 0 {
-			searches = network.MergeValues(searches, strings.Split(n.DNSSuffix, ","))
+		if !strings.EqualFold(spec.Annotations[annotations.UVMNetworkingSkip], "true") {
+			return err
 		}
-		if len(n.DNSServerList) > 0 {
-			servers = network.MergeValues(servers, strings.Split(n.DNSServerList, ","))
+		// Networking is skipped, do not error out
+		log.G(ctx).Infof("setupSandboxContainerSpec: Did not find NS spec %v, err %v", spec, err)
+	} else {
+		var searches, servers []string
+		for _, n := range ns.Adapters() {
+			if len(n.DNSSuffix) > 0 {
+				searches = network.MergeValues(searches, strings.Split(n.DNSSuffix, ","))
+			}
+			if len(n.DNSServerList) > 0 {
+				servers = network.MergeValues(servers, strings.Split(n.DNSServerList, ","))
+			}
 		}
-	}
-	resolvContent, err := network.GenerateResolvConfContent(ctx, searches, servers, nil)
-	if err != nil {
-		return errors.Wrap(err, "failed to generate sandbox resolv.conf content")
-	}
-	sandboxResolvPath := getVirtualPodAwareSandboxResolvPath(id, virtualSandboxID)
-	if err := os.WriteFile(sandboxResolvPath, []byte(resolvContent), 0644); err != nil {
-		return errors.Wrap(err, "failed to write sandbox resolv.conf")
+		resolvContent, err := network.GenerateResolvConfContent(ctx, searches, servers, nil)
+		if err != nil {
+			return errors.Wrap(err, "failed to generate sandbox resolv.conf content")
+		}
+		sandboxResolvPath := getVirtualPodAwareSandboxResolvPath(id, virtualSandboxID)
+		if err := os.WriteFile(sandboxResolvPath, []byte(resolvContent), 0644); err != nil {
+			return errors.Wrap(err, "failed to write sandbox resolv.conf")
+		}
 	}
 
 	// User.Username is generally only used on Windows, but as there's no (easy/fast at least) way to grab

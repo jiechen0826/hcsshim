@@ -278,6 +278,17 @@ func (h *Host) RemoveContainer(id string) {
 	} else {
 		// delete the network namespace for standalone and sandbox containers
 		criType, isCRI := c.spec.Annotations[annotations.KubernetesContainerType]
+
+		// Apply same virtual pod detection logic as in CreateContainer
+		if isVirtualPod && id == virtualPodID {
+			criType = "sandbox"
+			isCRI = true
+			logrus.WithFields(logrus.Fields{
+				"containerID":  id,
+				"virtualPodID": virtualPodID,
+			}).Info("Virtual pod first container detected during removal - treating as sandbox")
+		}
+
 		if !isCRI || criType == "sandbox" {
 			_ = RemoveNetworkNamespace(context.Background(), id)
 		}
@@ -340,6 +351,19 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 
 	// Check for virtual pod annotation
 	virtualPodID, isVirtualPod := settings.OCISpecification.Annotations[annotations.VirtualPodID]
+
+	// Special handling for virtual pod sandbox containers:
+	// The first container in a virtual pod (containerID == virtualPodID) should be treated as a sandbox
+	// even if the CRI annotation might indicate otherwise due to host-side UVM setup differences
+	if isVirtualPod && id == virtualPodID {
+		criType = "sandbox"
+		isCRI = true
+		logrus.WithFields(logrus.Fields{
+			"containerID":     id,
+			"virtualPodID":    virtualPodID,
+			"originalCriType": settings.OCISpecification.Annotations[annotations.KubernetesContainerType],
+		}).Info("Virtual pod first container detected - treating as sandbox container")
+	}
 
 	c := &Container{
 		id:             id,
@@ -635,10 +659,12 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 	// Sandbox or standalone, move the networks to the container namespace
 	if criType == "sandbox" || !isCRI {
 		ns, err := getNetworkNamespace(namespaceID)
-		if isCRI && err != nil {
+		log.G(ctx).Debugf("getNetworkNamespace(%s) returned %v, cflick", namespaceID, ns)
+		// skip network activity for sandbox containers marked with skip uvm networking annotation
+		if isCRI && err != nil && !strings.EqualFold(settings.OCISpecification.Annotations[annotations.UVMNetworkingSkip], "true") {
+			// return nil, err
 			return nil, err
 		}
-		// standalone is not required to have a networking namespace setup
 		if ns != nil {
 			if err := ns.AssignContainerPid(ctx, c.container.Pid()); err != nil {
 				return nil, err

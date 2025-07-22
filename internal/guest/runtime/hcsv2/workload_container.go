@@ -16,8 +16,10 @@ import (
 	"go.opencensus.io/trace"
 	"golang.org/x/sys/unix"
 
+	"github.com/Microsoft/hcsshim/internal/guest/network"
 	specGuest "github.com/Microsoft/hcsshim/internal/guest/spec"
 	"github.com/Microsoft/hcsshim/internal/guestpath"
+	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oc"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
 )
@@ -170,6 +172,43 @@ func setupWorkloadContainerSpec(ctx context.Context, sbid, id string, spec *oci.
 		return errors.Errorf("workload container must not change hostname: %s", spec.Hostname)
 	}
 
+	log.G(ctx).Debug("quick setup network namespace, cflick")
+	if strings.EqualFold(spec.Annotations[annotations.PreferExistingUVM], "true") {
+		ns := GetOrAddNetworkNamespace(specGuest.GetNetworkNamespaceID(spec))
+		err := ns.Sync(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Write resolv.conf -- no guarentee other containers have done this
+	log.G(ctx).Debug("workload resolv.conf, cflick")
+	ns, err := getNetworkNamespace(specGuest.GetNetworkNamespaceID(spec))
+	if err != nil {
+		if !strings.EqualFold(spec.Annotations[annotations.PreferExistingUVM], "true") {
+			return err
+		}
+		log.G(ctx).Infof("setupSandboxContainerSpec: Did not find NS spec %v, err %v", spec, err)
+	} else {
+		var searches, servers []string
+		for _, n := range ns.Adapters() {
+			if len(n.DNSSuffix) > 0 {
+				searches = network.MergeValues(searches, strings.Split(n.DNSSuffix, ","))
+			}
+			if len(n.DNSServerList) > 0 {
+				servers = network.MergeValues(servers, strings.Split(n.DNSServerList, ","))
+			}
+		}
+		resolvContent, err := network.GenerateResolvConfContent(ctx, searches, servers, nil)
+		if err != nil {
+			return errors.Wrap(err, "failed to generate sandbox resolv.conf content")
+		}
+		sandboxResolvPath := getSandboxResolvPath(id)
+		if err := os.WriteFile(sandboxResolvPath, []byte(resolvContent), 0644); err != nil {
+			return errors.Wrap(err, "failed to write sandbox resolv.conf")
+		}
+	}
+
 	// update any sandbox mounts with the sandboxMounts directory path and create files
 	if err = updateSandboxMounts(sbid, spec); err != nil {
 		return errors.Wrapf(err, "failed to update sandbox mounts for container %v in sandbox %v", id, sbid)
@@ -216,15 +255,8 @@ func setupWorkloadContainerSpec(ctx context.Context, sbid, id string, spec *oci.
 		}
 	}
 
-	// Set cgroup path - check if this is part of a virtual pod
-	if virtualPodID, isVirtualPod := spec.Annotations[annotations.VirtualPodID]; isVirtualPod {
-		// Workload container in virtual pod goes under /virtual-pods/{virtualPodID}/{containerID}
-		// Each virtualPodID creates its own pod-level cgroup for all containers in that virtual pod
-		spec.Linux.CgroupsPath = "/virtual-pods/" + virtualPodID + "/" + id
-	} else {
-		// Traditional workload container goes under /containers
-		spec.Linux.CgroupsPath = "/containers/" + id
-	}
+	// Set cgroup path - force the parent cgroup into our /containers root
+	spec.Linux.CgroupsPath = "/containers/" + id
 
 	if spec.Windows != nil {
 		// we only support Nvidia gpus right now
