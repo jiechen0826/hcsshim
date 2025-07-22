@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -67,7 +68,12 @@ func readMemoryEvents(startTime time.Time, efdFile *os.File, cgName string, thre
 		}
 
 		count++
-		msg := "memory usage for cgroup exceeded threshold"
+		var msg string
+		if strings.HasPrefix(cgName, "/virtual-pods") {
+			msg = "memory usage for virtual pods cgroup exceeded threshold"
+		} else {
+			msg = "memory usage for cgroup exceeded threshold"
+		}
 		entry := logrus.WithFields(logrus.Fields{
 			"gcsStartTime":   startTime,
 			"time":           time.Now(),
@@ -395,6 +401,14 @@ func main() {
 	oomFile := os.NewFile(oom, "cefd")
 	defer oomFile.Close()
 
+	// Setup OOM monitoring for virtual-pods cgroup
+	virtualPodsOom, err := virtualPodsControl.OOMEventFD()
+	if err != nil {
+		logrus.WithError(err).Fatal("failed to retrieve the virtual-pods cgroups oom eventfd")
+	}
+	virtualPodsOomFile := os.NewFile(virtualPodsOom, "vp-oomfd")
+	defer virtualPodsOomFile.Close()
+
 	// time synchronization service
 	if !(*disableTimeSync) {
 		if err = startTimeSyncService(); err != nil {
@@ -404,6 +418,7 @@ func main() {
 
 	go readMemoryEvents(startTime, gefdFile, "/gcs", int64(*gcsMemLimitBytes), gcsControl)
 	go readMemoryEvents(startTime, oomFile, "/containers", containersLimit, containersControl)
+	go readMemoryEvents(startTime, virtualPodsOomFile, "/virtual-pods", containersLimit, virtualPodsControl)
 	err = b.ListenAndServe(bridgeIn, bridgeOut)
 	if err != nil {
 		logrus.WithFields(logrus.Fields{
