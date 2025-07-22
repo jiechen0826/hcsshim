@@ -217,9 +217,31 @@ const (
 	// supplied was C:\rootfs and the container's ID is 12345678 the rootfs will be located at C:\rootfs\12345678.
 	HostProcessRootfsLocation = "microsoft.com/hostprocess-rootfs-location"
 
-	// Virtual Pod Annotations for multi-pod support in single UVM
-	// VirtualPodID identifies a virtual pod that shares a UVM with other pods
-	VirtualPodID = "io.microsoft.virtualpod.id"
+	// UVM and Multi-pod Annotations
+
+	// UVMNetworkingSkip is the annotation to skip networking setup for the UVM.
+	// This prevents errors from being raised when the UVM is created without endpoints. Boolean.
+	UVMNetworkingSkip = "io.microsoft.cri.networking.skip"
+
+	// PreferExistingUVM is the annotation to create a pod sandbox in an existing utility VM,
+	// if one exists, instead of creating a new utility VM for the pod. Boolean.
+	PreferExistingUVM = "io.microsoft.cri.prefer-existing-uvm"
+
+	// ExistingUVMID is the annotation to specify the ID of an existing utility VM
+	// to use for the pod sandbox, assuming PreferExistingUVM is true. String.
+	ExistingUVMID = "io.microsoft.cri.existing-uvm-id"
+
+	// TargetVirtualPod is the annotation to specify that a container should be
+	// placed in a pod not associated with a shim. This is used for multipod scenarios. Boolean.
+	TargetVirtualPod = "io.microsoft.cri.target-virtual-pod"
+
+	// ParentPodID is the container annotation to specify the pod ID associated with a shim
+	// (i.e. the parent pod) for a container that is NOT being placed in that pod. This is used for multipod scenarios. String.
+	ParentPodID = "io.microsoft.cri.parent-pod-id"
+
+	// VirtualPodID is the annotation to specify the pod ID not associated with a shim
+	// that a container should be placed in. This is used for multipod scenarios. String.
+	VirtualPodID = "io.microsoft.cri.virtual-pod-id"
 
 	// VirtualPodMasterSandboxID specifies the master sandbox ID for a virtual pod
 	VirtualPodMasterSandboxID = "io.microsoft.virtualpod.master.sandboxid"
