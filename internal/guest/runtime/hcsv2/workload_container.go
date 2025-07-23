@@ -173,7 +173,10 @@ func setupWorkloadContainerSpec(ctx context.Context, sbid, id string, spec *oci.
 	}
 
 	log.G(ctx).Debug("quick setup network namespace, cflick")
-	if strings.EqualFold(spec.Annotations[annotations.PreferExistingUVM], "true") {
+	// Check if this is a virtual pod sandbox container by comparing container ID with virtual pod ID
+	virtualPodID := spec.Annotations[annotations.VirtualPodID]
+	isVirtualPodSandbox := virtualPodID != "" && id == virtualPodID
+	if isVirtualPodSandbox {
 		ns := GetOrAddNetworkNamespace(specGuest.GetNetworkNamespaceID(spec))
 		err := ns.Sync(ctx)
 		if err != nil {
@@ -185,7 +188,7 @@ func setupWorkloadContainerSpec(ctx context.Context, sbid, id string, spec *oci.
 	log.G(ctx).Debug("workload resolv.conf, cflick")
 	ns, err := getNetworkNamespace(specGuest.GetNetworkNamespaceID(spec))
 	if err != nil {
-		if !strings.EqualFold(spec.Annotations[annotations.PreferExistingUVM], "true") {
+		if !isVirtualPodSandbox {
 			return err
 		}
 		log.G(ctx).Infof("setupSandboxContainerSpec: Did not find NS spec %v, err %v", spec, err)

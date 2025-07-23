@@ -87,8 +87,9 @@ func setupSandboxContainerSpec(ctx context.Context, id string, spec *oci.Spec) (
 	}
 
 	log.G(ctx).Debug("quick setup network namespace, cflick")
-	if strings.EqualFold(spec.Annotations[annotations.UVMNetworkingSkip], "true") ||
-		strings.EqualFold(spec.Annotations[annotations.PreferExistingUVM], "true") {
+	// Check if this is a virtual pod sandbox container by comparing container ID with virtual pod ID
+	isVirtualPodSandbox := virtualSandboxID != "" && id == virtualSandboxID
+	if strings.EqualFold(spec.Annotations[annotations.UVMNetworkingSkip], "true") || isVirtualPodSandbox {
 		ns := GetOrAddNetworkNamespace(specGuest.GetNetworkNamespaceID(spec))
 		err := ns.Sync(ctx)
 		if err != nil {
