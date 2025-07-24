@@ -258,8 +258,14 @@ func setupWorkloadContainerSpec(ctx context.Context, sbid, id string, spec *oci.
 		}
 	}
 
-	// Set cgroup path - force the parent cgroup into our /containers root
-	spec.Linux.CgroupsPath = "/containers/" + id
+	// Set cgroup path - check if this is a virtual pod container
+	if virtualPodID != "" {
+		// Virtual pod containers go under /virtual-pods/virtualPodID/containerID
+		spec.Linux.CgroupsPath = "/virtual-pods/" + virtualPodID + "/" + id
+	} else {
+		// Regular containers go under /containers
+		spec.Linux.CgroupsPath = "/containers/" + id
+	}
 
 	if spec.Windows != nil {
 		// we only support Nvidia gpus right now
