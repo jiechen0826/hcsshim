@@ -89,7 +89,7 @@ func setupSandboxContainerSpec(ctx context.Context, id string, spec *oci.Spec) (
 	log.G(ctx).Debug("quick setup network namespace, cflick")
 	// Check if this is a virtual pod sandbox container by comparing container ID with virtual pod ID
 	isVirtualPodSandbox := virtualSandboxID != "" && id == virtualSandboxID
-	if strings.EqualFold(spec.Annotations[annotations.UVMNetworkingSkip], "true") || isVirtualPodSandbox {
+	if strings.EqualFold(spec.Annotations[annotations.SkipPodNetworking], "true") || isVirtualPodSandbox {
 		ns := GetOrAddNetworkNamespace(specGuest.GetNetworkNamespaceID(spec))
 		err := ns.Sync(ctx)
 		if err != nil {
@@ -100,7 +100,7 @@ func setupSandboxContainerSpec(ctx context.Context, id string, spec *oci.Spec) (
 	log.G(ctx).Debug("sandbox resolv.conf, cflick")
 	ns, err := getNetworkNamespace(specGuest.GetNetworkNamespaceID(spec))
 	if err != nil {
-		if !strings.EqualFold(spec.Annotations[annotations.UVMNetworkingSkip], "true") {
+		if !strings.EqualFold(spec.Annotations[annotations.SkipPodNetworking], "true") {
 			return err
 		}
 		// Networking is skipped, do not error out

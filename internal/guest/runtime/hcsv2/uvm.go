@@ -661,7 +661,7 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 		ns, err := getNetworkNamespace(namespaceID)
 		log.G(ctx).Debugf("getNetworkNamespace(%s) returned %v, cflick", namespaceID, ns)
 		// skip network activity for sandbox containers marked with skip uvm networking annotation
-		if isCRI && err != nil && !strings.EqualFold(settings.OCISpecification.Annotations[annotations.UVMNetworkingSkip], "true") {
+		if isCRI && err != nil && !strings.EqualFold(settings.OCISpecification.Annotations[annotations.SkipPodNetworking], "true") {
 			// return nil, err
 			return nil, err
 		}

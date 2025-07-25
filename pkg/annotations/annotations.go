@@ -219,13 +219,13 @@ const (
 
 	// UVM and Multi-pod Annotations
 
-	// UVMNetworkingSkip is the annotation to skip networking setup for the UVM.
-	// This prevents errors from being raised when the UVM is created without endpoints. Boolean.
-	UVMNetworkingSkip = "io.microsoft.cri.networking.skip"
+	// SkipPodNetworking is the annotation to skip networking setup for the pod.
+	// This prevents errors from being raised when the pod is created without endpoints. Boolean.
+	SkipPodNetworking = "io.microsoft.cri.skip-pod-networking"
 
-	// ExistingUVMID is the annotation to specify the ID of an existing utility VM
-	// to use for the pod sandbox. String.
-	ExistingUVMID = "io.microsoft.cri.existing-uvm-id"
+	// TenantSandboxID is the annotation to specify the ID of an existing tenant sandbox
+	// to use for the pod sandbox. If present, the pod will join the specified tenant sandbox. String.
+	TenantSandboxID = "io.microsoft.cri.tenant-sandbox-id"
 
 	// VirtualPodID is the annotation to specify the pod ID not associated with a shim
 	// that a container should be placed in. This is used for multipod scenarios. String.
