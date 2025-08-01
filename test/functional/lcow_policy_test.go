@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"testing"
 
-	ctrdoci "github.com/containerd/containerd/oci"
+	ctrdoci "github.com/containerd/containerd/v2/pkg/oci"
 
 	"github.com/Microsoft/hcsshim/internal/uvm"
 	"github.com/Microsoft/hcsshim/pkg/securitypolicy"
@@ -89,8 +89,7 @@ func TestGetProperties_WithPolicy(t *testing.T) {
 				if allowProperties {
 					t.Fatalf("get properties should have been allowed: %s", err)
 				}
-				if !(policytest.AssertErrorContains(t, err, "deny") &&
-					policytest.AssertErrorContains(t, err, "get_properties")) {
+				if !policytest.AssertErrorContains(t, err, "deny") || !policytest.AssertErrorContains(t, err, "get_properties") {
 					t.Fatalf("get properties denial error, got: %s", err)
 				}
 			} else {
