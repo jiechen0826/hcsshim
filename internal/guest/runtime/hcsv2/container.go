@@ -18,7 +18,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"go.opencensus.io/trace"
 
-	"github.com/Microsoft/hcsshim/internal/guest/gcserr"
+	"github.com/Microsoft/hcsshim/internal/bridgeutils/gcserr"
 	"github.com/Microsoft/hcsshim/internal/guest/prot"
 	"github.com/Microsoft/hcsshim/internal/guest/runtime"
 	specGuest "github.com/Microsoft/hcsshim/internal/guest/spec"
@@ -251,9 +251,10 @@ func (c *Container) setExitType(signal syscall.Signal) {
 	c.etL.Lock()
 	defer c.etL.Unlock()
 
-	if signal == syscall.SIGTERM {
+	switch signal {
+	case syscall.SIGTERM:
 		c.exitType = prot.NtGracefulExit
-	} else if signal == syscall.SIGKILL {
+	case syscall.SIGKILL:
 		c.exitType = prot.NtForcedExit
 	}
 }

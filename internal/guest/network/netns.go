@@ -170,7 +170,7 @@ func NetNSConfig(ctx context.Context, ifStr string, nsPid int, adapter *guestres
 	}
 
 	// Add some debug logging
-	if entry.Logger.GetLevel() >= logrus.DebugLevel {
+	if entry.Logger.IsLevelEnabled(logrus.DebugLevel) {
 		curNS, _ := netns.Get()
 		// Refresh link attributes/state
 		link, _ = netlink.LinkByIndex(link.Attrs().Index)
@@ -247,7 +247,7 @@ func configureLink(ctx context.Context,
 
 		// dst will be nil when setting default gateways
 		var dst *net.IPNet
-		if !(r.DestinationPrefix == ipv4GwDestination || r.DestinationPrefix == ipv6GwDestination) {
+		if r.DestinationPrefix != ipv4GwDestination && r.DestinationPrefix != ipv6GwDestination {
 			dstIP, dstAddr, err := net.ParseCIDR(r.DestinationPrefix)
 			if err != nil {
 				return fmt.Errorf("parsing route dst address %s failed: %w", r.DestinationPrefix, err)
