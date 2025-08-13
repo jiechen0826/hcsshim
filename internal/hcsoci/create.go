@@ -148,9 +148,9 @@ func configureSandboxNetwork(ctx context.Context, coi *createOptionsInternal, r 
 	coi.actualNetworkNamespace = r.NetNS()
 
 	if coi.HostingSystem != nil {
-		// Also check for virtual pod first containers: if containerID == virtualPodID, treat as sandbox
+		// Check for virtual pod first containers: if containerID == virtualPodID, treat as sandbox for networking configuration
 		virtualPodID := coi.Spec.Annotations[annotations.VirtualPodID]
-		isVirtualPodFirstContainer := virtualPodID != "" && coi.actualID == virtualPodID // Skip networking if explicitly disabled
+		isVirtualPodFirstContainer := virtualPodID != "" && coi.actualID == virtualPodID
 
 		// Only add the network namespace to a standalone or sandbox
 		// container but not a workload container in a sandbox that inherits
