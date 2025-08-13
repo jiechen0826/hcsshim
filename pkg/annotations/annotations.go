@@ -105,7 +105,10 @@ const (
 
 	// LCOWPrivileged is used to specify that the container should be run in privileged mode.
 	LCOWPrivileged = "io.microsoft.virtualmachine.lcow.privileged"
+)
 
+// LCOW multipod annotations enables multipod and warmpooling.
+const (
 	// SkipPodNetworking is the annotation to skip networking setup for the pod.
 	// This prevents errors from being raised when the pod is created without endpoints. Boolean.
 	SkipPodNetworking = "io.microsoft.cri.skip-pod-networking"
