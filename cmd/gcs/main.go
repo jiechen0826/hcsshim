@@ -333,14 +333,14 @@ func main() {
 	defer containersControl.Delete() //nolint:errcheck
 
 	// Create virtual-pods cgroup hierarchy for multi-pod support
-	// This will be the parent for all virtual pod cgroups: /virtual-pods/{virtualSandboxID}
-	virtualPodsControl, err := cgroups.New(cgroups.StaticPath("/virtual-pods"), &oci.LinuxResources{
+	// This will be the parent for all virtual pod cgroups: /containers/virtual-pods/{virtualSandboxID}
+	virtualPodsControl, err := cgroups.New(cgroups.StaticPath("/containers/virtual-pods"), &oci.LinuxResources{
 		Memory: &oci.LinuxMemory{
 			Limit: &containersLimit, // Share the same limit as containers
 		},
 	})
 	if err != nil {
-		logrus.WithError(err).Fatal("failed to create virtual-pods cgroup")
+		logrus.WithError(err).Fatal("failed to create containers/virtual-pods cgroup")
 	}
 	defer virtualPodsControl.Delete() //nolint:errcheck
 
@@ -418,7 +418,7 @@ func main() {
 
 	go readMemoryEvents(startTime, gefdFile, "/gcs", int64(*gcsMemLimitBytes), gcsControl)
 	go readMemoryEvents(startTime, oomFile, "/containers", containersLimit, containersControl)
-	go readMemoryEvents(startTime, virtualPodsOomFile, "/virtual-pods", containersLimit, virtualPodsControl)
+	go readMemoryEvents(startTime, virtualPodsOomFile, "/containers/virtual-pods", containersLimit, virtualPodsControl)
 	err = b.ListenAndServe(bridgeIn, bridgeOut)
 	if err != nil {
 		logrus.WithFields(logrus.Fields{

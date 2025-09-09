@@ -1402,7 +1402,7 @@ func (h *Host) CreateVirtualPod(ctx context.Context, virtualSandboxID, masterSan
 	}
 
 	// Create cgroup path for this virtual pod
-	cgroupPath := fmt.Sprintf("/virtual-pods/%s", virtualSandboxID)
+	cgroupPath := fmt.Sprintf("/containers/virtual-pods/%s", virtualSandboxID)
 
 	// Create the cgroup for this virtual pod with memory limit if provided
 	resources := &specs.LinuxResources{}

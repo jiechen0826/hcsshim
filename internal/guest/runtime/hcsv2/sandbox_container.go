@@ -147,8 +147,8 @@ func setupSandboxContainerSpec(ctx context.Context, id string, spec *oci.Spec) (
 
 	// Set cgroup path - check if this is a virtual pod
 	if virtualSandboxID != "" {
-		// Virtual pod sandbox gets its own cgroup under /virtual-pods using the virtual pod ID
-		spec.Linux.CgroupsPath = "/virtual-pods/" + virtualSandboxID
+		// Virtual pod sandbox gets its own cgroup under /containers/virtual-pods using the virtual pod ID
+		spec.Linux.CgroupsPath = "/containers/virtual-pods/" + virtualSandboxID
 	} else {
 		// Traditional sandbox goes under /containers
 		spec.Linux.CgroupsPath = "/containers/" + id

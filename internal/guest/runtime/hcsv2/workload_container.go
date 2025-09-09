@@ -260,8 +260,8 @@ func setupWorkloadContainerSpec(ctx context.Context, sbid, id string, spec *oci.
 
 	// Set cgroup path - check if this is a virtual pod container
 	if virtualPodID != "" {
-		// Virtual pod containers go under /virtual-pods/virtualPodID/containerID
-		spec.Linux.CgroupsPath = "/virtual-pods/" + virtualPodID + "/" + id
+		// Virtual pod containers go under /containers/virtual-pods/virtualPodID/containerID
+		spec.Linux.CgroupsPath = "/containers/virtual-pods/" + virtualPodID + "/" + id
 	} else {
 		// Regular containers go under /containers
 		spec.Linux.CgroupsPath = "/containers/" + id
