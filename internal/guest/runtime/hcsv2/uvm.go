@@ -437,9 +437,6 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 			// Capture namespaceID if any because setupSandboxContainerSpec clears the Windows section.
 			namespaceID = specGuest.GetNetworkNamespaceID(settings.OCISpecification)
 
-			// Check if this is a virtual pod first
-			virtualSandboxID, isVirtualPod := settings.OCISpecification.Annotations[annotations.VirtualPodID]
-
 			err = setupSandboxContainerSpec(ctx, id, settings.OCISpecification)
 			if err != nil {
 				return nil, err
@@ -452,14 +449,14 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 
 			if isVirtualPod {
 				// For virtual pods, create virtual pod specific paths
-				err = setupVirtualPodMountsPath(virtualSandboxID, id)
+				err = setupVirtualPodMountsPath(virtualPodID, id)
 				if err != nil {
 					return nil, err
 				}
 				// Create hugepages path for virtual pod
-				mountPath := specGuest.VirtualPodHugePagesMountsDir(virtualSandboxID)
+				mountPath := specGuest.VirtualPodHugePagesMountsDir(virtualPodID)
 				if err := os.MkdirAll(mountPath, 0755); err != nil {
-					return nil, errors.Wrapf(err, "failed to create virtual pod hugepage mounts dir %v", virtualSandboxID)
+					return nil, errors.Wrapf(err, "failed to create virtual pod hugepage mounts dir %v", virtualPodID)
 				}
 				if err := storage.MountRShared(mountPath); err != nil {
 					return nil, err
@@ -483,7 +480,8 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 			if !ok || sid == "" {
 				return nil, errors.Errorf("unsupported 'io.kubernetes.cri.sandbox-id': '%s'", sid)
 			}
-			if err := setupWorkloadContainerSpec(ctx, sid, id, settings.OCISpecification, settings.OCIBundlePath); err != nil {
+			err = setupWorkloadContainerSpec(ctx, sid, id, settings.OCISpecification, settings.OCIBundlePath)
+			if err != nil {
 				return nil, err
 			}
 
