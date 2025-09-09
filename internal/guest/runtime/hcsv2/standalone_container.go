@@ -158,10 +158,10 @@ func setupStandaloneContainerSpec(ctx context.Context, id string, spec *oci.Spec
 	}
 
 	// Set cgroup path - check if this is part of a virtual pod (unlikely for standalone)
-	if virtualPodID, isVirtualPod := spec.Annotations[annotations.VirtualPodID]; isVirtualPod {
-		// Standalone container in virtual pod goes under /containers/virtual-pods/{virtualPodID}/{containerID}
-		// Each virtualPodID creates its own pod-level cgroup for all containers in that virtual pod
-		spec.Linux.CgroupsPath = "/containers/virtual-pods/" + virtualPodID + "/" + id
+	if virtualSandboxID != "" {
+		// Standalone container in virtual pod goes under /containers/virtual-pods/{virtualSandboxID}/{containerID}
+		// Each virtualSandboxID creates its own pod-level cgroup for all containers in that virtual pod
+		spec.Linux.CgroupsPath = "/containers/virtual-pods/" + virtualSandboxID + "/" + id
 	} else {
 		// Traditional standalone container goes under /containers
 		spec.Linux.CgroupsPath = "/containers/" + id
