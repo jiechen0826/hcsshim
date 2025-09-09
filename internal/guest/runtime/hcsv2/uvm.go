@@ -267,10 +267,7 @@ func (h *Host) RemoveContainer(id string) {
 	if isVirtualPod {
 		// Remove from virtual pod tracking
 		h.RemoveContainerFromVirtualPod(id)
-
-		// Don't remove the network namespace here as it might be shared with other containers
-		// in the same virtual pod. Network namespace cleanup is handled in virtual pod cleanup.
-
+		// Network namespace cleanup is handled in virtual pod cleanup when last container is removed.
 		logrus.WithFields(logrus.Fields{
 			"containerID":  id,
 			"virtualPodID": virtualPodID,
@@ -278,17 +275,6 @@ func (h *Host) RemoveContainer(id string) {
 	} else {
 		// delete the network namespace for standalone and sandbox containers
 		criType, isCRI := c.spec.Annotations[annotations.KubernetesContainerType]
-
-		// Apply same virtual pod detection logic as in CreateContainer
-		if isVirtualPod && id == virtualPodID {
-			criType = "sandbox"
-			isCRI = true
-			logrus.WithFields(logrus.Fields{
-				"containerID":  id,
-				"virtualPodID": virtualPodID,
-			}).Info("Virtual pod first container detected during removal - treating as sandbox")
-		}
-
 		if !isCRI || criType == "sandbox" {
 			_ = RemoveNetworkNamespace(context.Background(), id)
 		}
@@ -1496,6 +1482,14 @@ func (h *Host) RemoveContainerFromVirtualPod(containerID string) {
 	// Remove from virtual pod
 	if vp, vpExists := h.virtualPods[virtualSandboxID]; vpExists {
 		delete(vp.Containers, containerID)
+
+		// If this is the sandbox container, delete the network namespace
+		if containerID == virtualSandboxID && vp.NetworkNamespace != "" {
+			if err := RemoveNetworkNamespace(context.Background(), vp.NetworkNamespace); err != nil {
+				logrus.WithError(err).WithField("virtualSandboxID", virtualSandboxID).
+					Warn("Failed to remove virtual pod network namespace (sandbox container removal)")
+			}
+		}
 
 		// If this was the last container, cleanup the virtual pod
 		if len(vp.Containers) == 0 {
