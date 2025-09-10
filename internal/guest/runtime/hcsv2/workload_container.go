@@ -50,12 +50,13 @@ func updateSandboxMounts(sbid string, spec *oci.Spec) error {
 				return errors.Errorf("mount path %v for mount %v is not within sandbox's mounts dir", sandboxSource, m.Source)
 			}
 
-		spec.Mounts[i].Source = sandboxSource
+			spec.Mounts[i].Source = sandboxSource
 
-		_, err := os.Stat(sandboxSource)
-		if os.IsNotExist(err) {
-			if err := mkdirAllModePerm(sandboxSource); err != nil {
-				return err
+			_, err := os.Stat(sandboxSource)
+			if os.IsNotExist(err) {
+				if err := mkdirAllModePerm(sandboxSource); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -74,21 +75,22 @@ func updateHugePageMounts(sbid string, spec *oci.Spec) error {
 			pageSize := strings.Split(subPath, string(os.PathSeparator))[0]
 			hugePageMountSource := filepath.Join(mountsDir, subPath)
 
-		// filepath.Join cleans the resulting path before returning so it would resolve the relative path if one was given.
-		// Hence, we need to ensure that the resolved path is still under the correct directory
-		if !strings.HasPrefix(hugePageMountSource, mountsDir) {
-			return errors.Errorf("mount path %v for mount %v is not within hugepages's mounts dir", hugePageMountSource, m.Source)
-		}
-
-		spec.Mounts[i].Source = hugePageMountSource
-
-		_, err := os.Stat(hugePageMountSource)
-		if os.IsNotExist(err) {
-			if err := mkdirAllModePerm(hugePageMountSource); err != nil {
-				return err
+			// filepath.Join cleans the resulting path before returning so it would resolve the relative path if one was given.
+			// Hence, we need to ensure that the resolved path is still under the correct directory
+			if !strings.HasPrefix(hugePageMountSource, mountsDir) {
+				return errors.Errorf("mount path %v for mount %v is not within hugepages's mounts dir", hugePageMountSource, m.Source)
 			}
-			if err := unix.Mount("none", hugePageMountSource, "hugetlbfs", 0, "pagesize="+pageSize); err != nil {
-				return errors.Errorf("mount operation failed for %v failed with error %v", hugePageMountSource, err)
+
+			spec.Mounts[i].Source = hugePageMountSource
+
+			_, err := os.Stat(hugePageMountSource)
+			if os.IsNotExist(err) {
+				if err := mkdirAllModePerm(hugePageMountSource); err != nil {
+					return err
+				}
+				if err := unix.Mount("none", hugePageMountSource, "hugetlbfs", 0, "pagesize="+pageSize); err != nil {
+					return errors.Errorf("mount operation failed for %v failed with error %v", hugePageMountSource, err)
+				}
 			}
 		}
 	}
