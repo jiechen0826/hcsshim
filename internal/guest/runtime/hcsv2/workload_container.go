@@ -16,10 +16,8 @@ import (
 	"go.opencensus.io/trace"
 	"golang.org/x/sys/unix"
 
-	"github.com/Microsoft/hcsshim/internal/guest/network"
 	specGuest "github.com/Microsoft/hcsshim/internal/guest/spec"
 	"github.com/Microsoft/hcsshim/internal/guestpath"
-	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oc"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
 )
@@ -174,46 +172,6 @@ func setupWorkloadContainerSpec(ctx context.Context, sbid, id string, spec *oci.
 		return errors.Errorf("workload container must not change hostname: %s", spec.Hostname)
 	}
 
-	log.G(ctx).Debug("quick setup network namespace, cflick")
-	// Check if this is a virtual pod sandbox container by comparing container ID with virtual pod ID
-	virtualPodID := spec.Annotations[annotations.VirtualPodID]
-	isVirtualPodSandbox := virtualPodID != "" && id == virtualPodID
-	if isVirtualPodSandbox {
-		ns := GetOrAddNetworkNamespace(specGuest.GetNetworkNamespaceID(spec))
-		err := ns.Sync(ctx)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Write resolv.conf -- no guarentee other containers have done this
-	log.G(ctx).Debug("workload resolv.conf, cflick")
-	ns, err := getNetworkNamespace(specGuest.GetNetworkNamespaceID(spec))
-	if err != nil {
-		if !isVirtualPodSandbox {
-			return err
-		}
-		log.G(ctx).Infof("setupSandboxContainerSpec: Did not find NS spec %v, err %v", spec, err)
-	} else {
-		var searches, servers []string
-		for _, n := range ns.Adapters() {
-			if len(n.DNSSuffix) > 0 {
-				searches = network.MergeValues(searches, strings.Split(n.DNSSuffix, ","))
-			}
-			if len(n.DNSServerList) > 0 {
-				servers = network.MergeValues(servers, strings.Split(n.DNSServerList, ","))
-			}
-		}
-		resolvContent, err := network.GenerateResolvConfContent(ctx, searches, servers, nil)
-		if err != nil {
-			return errors.Wrap(err, "failed to generate sandbox resolv.conf content")
-		}
-		sandboxResolvPath := getSandboxResolvPath(id)
-		if err := os.WriteFile(sandboxResolvPath, []byte(resolvContent), 0644); err != nil {
-			return errors.Wrap(err, "failed to write sandbox resolv.conf")
-		}
-	}
-
 	// update any sandbox mounts with the sandboxMounts directory path and create files
 	if err = updateSandboxMounts(sbid, spec); err != nil {
 		return errors.Wrapf(err, "failed to update sandbox mounts for container %v in sandbox %v", id, sbid)
@@ -259,6 +217,9 @@ func setupWorkloadContainerSpec(ctx context.Context, sbid, id string, spec *oci.
 			return err
 		}
 	}
+
+	// Check if this is a virtual pod container
+	virtualPodID := spec.Annotations[annotations.VirtualPodID]
 
 	// Set cgroup path - check if this is a virtual pod container
 	if virtualPodID != "" {
