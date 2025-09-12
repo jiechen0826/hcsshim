@@ -82,7 +82,12 @@ func SandboxRootDir(sandboxID string) string {
 // VirtualPodRootDir returns the virtual pod root directory inside UVM/host.
 // This is used when multiple pods share a UVM via virtualSandboxID
 func VirtualPodRootDir(virtualSandboxID string) string {
-	return filepath.Join(guestpath.LCOWRootPrefixInUVM, "virtual-pods", virtualSandboxID)
+	// Ensure virtualSandboxID is a relative path to prevent directory traversal
+	sanitizedID := filepath.Clean(virtualSandboxID)
+	if filepath.IsAbs(sanitizedID) || strings.Contains(sanitizedID, "..") {
+		return ""
+	}
+	return filepath.Join(guestpath.LCOWRootPrefixInUVM, "virtual-pods", sanitizedID)
 }
 
 // VirtualPodAwareSandboxRootDir returns the appropriate root directory based on whether

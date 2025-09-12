@@ -1385,8 +1385,18 @@ func (h *Host) CreateVirtualPod(ctx context.Context, virtualSandboxID, masterSan
 		return fmt.Errorf("virtual pod %s already exists", virtualSandboxID)
 	}
 
-	// Create cgroup path for this virtual pod
-	cgroupPath := fmt.Sprintf("/containers/virtual-pods/%s", virtualSandboxID)
+	// Create cgroup path for this virtual pod under the parent cgroup
+	parentPath := ""
+	if h.virtualPodsCgroupParent != nil {
+		if pather, ok := h.virtualPodsCgroupParent.(interface{ Path() string }); ok {
+			parentPath = pather.Path()
+		} else {
+			parentPath = "/containers/virtual-pods" // fallback for default behavior
+		}
+	} else {
+		parentPath = "/containers/virtual-pods" // fallback for default behavior
+	}
+	cgroupPath := path.Join(parentPath, virtualSandboxID)
 
 	// Create the cgroup for this virtual pod with memory limit if provided
 	resources := &specs.LinuxResources{}
