@@ -1,5 +1,7 @@
 include Makefile.bootfiles
 
+# if Go is from the Microsoft Go fork
+MSGO:=0
 GO:=go
 GO_FLAGS:=-ldflags "-s -w" # strip Go binaries
 CGO_ENABLED:=0
@@ -16,6 +18,19 @@ LDLIBS:= -lkmod
 PREPROCESSORFLAGS:=-DMODULES=1
 endif
 
+GO_BUILD_ENV:=CGO_ENABLED=$(CGO_ENABLED)
+# starting with ms-go1.25, systemcrypto (for FIPS compliance) is enabled by default, which
+# requires CGo.
+# disable it for non-CGo builds.
+#
+# https://github.com/microsoft/go/blob/microsoft/main/eng/doc/MigrationGuide.md#cgo-is-not-enabled
+# https://github.com/microsoft/go/blob/microsoft/main/eng/doc/MigrationGuide.md#disabling-systemcrypto
+ifeq "$(MSGO)" "1"
+ifneq "$(CGO_ENABLED)" "1"
+# MS_GO_NOSYSTEMCRYPTO only works for >=ms-go1.25.2
+GO_BUILD_ENV+=MS_GO_NOSYSTEMCRYPTO=1 GOEXPERIMENT=nosystemcrypto
+endif
+endif
 GO_FLAGS_EXTRA:=
 ifeq "$(GOMODVENDOR)" "1"
 GO_FLAGS_EXTRA += -mod=vendor
@@ -24,7 +39,7 @@ GO_BUILD_TAGS:=
 ifneq ($(strip $(GO_BUILD_TAGS)),)
 GO_FLAGS_EXTRA += -tags="$(GO_BUILD_TAGS)"
 endif
-GO_BUILD:=CGO_ENABLED=$(CGO_ENABLED) $(GO) build $(GO_FLAGS) $(GO_FLAGS_EXTRA)
+GO_BUILD:= $(GO_BUILD_ENV) $(GO) build $(GO_FLAGS) $(GO_FLAGS_EXTRA)
 
 SRCROOT=$(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 # additional directories to search for rule prerequisites and targets

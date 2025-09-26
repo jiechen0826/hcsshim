@@ -19,8 +19,13 @@ stages:
         displayName: compute next GCS RPM version
         pool:
           type: windows
-          vmImage: 'windows-latest' # has az cli pre-installed
+          vmImage: "windows-latest" # has az cli pre-installed
         variables:
+          ob_sdl_codeql_compiled_enabled: false # skip CodeQL for this job
+          ob_sdl_tsa_enabled: false # skip TSA for this job
+          # skip CG scanning for all directories for this job
+          ob_sdl_cg_ignoreDirectories: "$(Build.SourcesDirectory)"
+
           # this is needed to avoid pipeline yaml parsing errors
           ob_outputDirectory: "$(Build.StagingDirectory)"
         steps:
@@ -188,6 +193,9 @@ stages:
               go build $(buildFlags) $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/jobobject-util
               go build $(buildFlags) $(coverFlags) -o $(testDir) github.com/Microsoft/hcsshim/cmd/runhcs
             env:
+              # see `Makefile` for more info on Go environment flags
+              MS_GO_NOSYSTEMCRYPTO: "1"
+              GOEXPERIMENT: nosystemcrypto
               CGO_ENABLED: "0"
               GOPROXY: off
               GOFLAGS: -mod=vendor
@@ -210,6 +218,9 @@ stages:
               mv ./gcs.test $OUT_DIR
               mv ./sample-logging-driver.exe $OUT_DIR
             env:
+              # see `Makefile` for more info on Go environment flags
+              MS_GO_NOSYSTEMCRYPTO: "1"
+              GOEXPERIMENT: nosystemcrypto
               CGO_ENABLED: "0"
               GOOS: windows
               OUT_DIR: "$(outDir)"
@@ -258,14 +269,14 @@ stages:
               set -eoux
 
               # First make the linux gcs bits
-              make out/delta-dev.tar.gz GO_FLAGS_EXTRA=-trimpath
+              make out/delta-dev.tar.gz $MAKE_BUILD_FLAGS
               cp out/delta.tar.gz $OUT_DIR
               cp out/delta-dev.tar.gz $OUT_DIR
               cp hack/catcpio.sh $OUT_DIR
 
               # cleanup and rebuild with rego enforcer support
               make clean
-              make out/delta-dev.tar.gz GO_BUILD_TAGS=rego GO_FLAGS_EXTRA=-trimpath
+              make out/delta-dev.tar.gz GO_BUILD_TAGS=rego $MAKE_BUILD_FLAGS
               cp out/delta-dev.tar.gz $OUT_DIR/delta-dev-rego.tar.gz
 
               # cleanup and rebuild with rego enforcer support for SNP
@@ -274,15 +285,17 @@ stages:
               awk '/^\/init/{$0 = $0 " -initial-policy-stance deny"} 1' boot/startup.sh > boot/startup.sh.new
               mv boot/startup.sh.new boot/startup.sh
               make clean
-              make out/delta-snp.tar.gz GO_BUILD_TAGS=rego GO_FLAGS_EXTRA=-trimpath
+              make out/delta-snp.tar.gz GO_BUILD_TAGS=rego $MAKE_BUILD_FLAGS
               cp out/delta-snp.tar.gz $OUT_DIR
               make clean
-
             env:
               GOPROXY: off
               GOFLAGS: -mod=vendor
               GOOS: linux
               OUT_DIR: "$(outDir)"
+              # shenanigans with Makefile variables means environment variables don't take precedence
+              # using microsoft Go instead of upsteam source
+              MAKE_BUILD_FLAGS: MSGO=1 GO_FLAGS_EXTRA=-trimpath
             displayName: build opengcs
             workingDirectory: $(Build.SourcesDirectory)/Microsoft.hcsshim
 

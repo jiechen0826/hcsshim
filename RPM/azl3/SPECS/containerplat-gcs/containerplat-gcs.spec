@@ -38,7 +38,8 @@ This package contains additional utilities for testing.
 
 %build
 make clean
-make KMOD=1 GO_FLAGS_EXTRA=-trimpath out/delta.tar.gz out/delta-dev.tar.gz
+# golang requirement **should** be the Microsoft Go distribution
+make MSGO=1 KMOD=1 GO_FLAGS_EXTRA=-trimpath out/delta.tar.gz out/delta-dev.tar.gz
 
 %install
 mkdir -p %{buildroot}%{_bindir}
