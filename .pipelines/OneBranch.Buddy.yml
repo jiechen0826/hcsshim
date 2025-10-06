@@ -110,11 +110,19 @@ extends:
 
     featureFlags:
       EnableCDPxPAT: false
+
       mariner:
         extraMounts: true
         extraToolchainMounts: true
         chroot: /temp/DockerStage/docker-chroot-
         chrootSuffixes: [1, 2, 3, 4 ,5, 6, 7, 8, 9, 10, 11, 12]
+
+      # use network restricted pool; pin to R1 since Overlake/NetLock/Compliant prevent GitHub access
+      # https://eng.ms/docs/cloud-ai-platform/azure-edge-platform-aep/aep-engineering-systems/productivity-and-experiences/network-isolation/oss/net_restrict
+      LinuxHostVersion:
+          Network: R1
+      WindowsHostVersion:
+          Network: R1
 
     stages:
       - template: shared-build-stages.yml@self
