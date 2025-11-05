@@ -4,11 +4,11 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"sync"
 	"time"
 
+	"github.com/Microsoft/go-winio/pkg/guid"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 
@@ -24,6 +24,7 @@ const (
 	measureArgName              = "measure"
 	parallelArgName             = "parallel"
 	countArgName                = "count"
+	resourcePartitionArgName    = "resource-partition"
 
 	execCommandLineArgName = "exec"
 	uvmConsolePipe         = "\\\\.\\pipe\\uvmpipe"
@@ -74,13 +75,17 @@ func main() {
 		},
 		cli.BoolFlag{
 			Name:        "debug",
-			Usage:       "Enable debug information",
+			Usage:       "Increase logging verbosity",
 			Destination: &debug,
 		},
 		cli.BoolFlag{
 			Name:        "gcs",
 			Usage:       "Launch the GCS and perform requested operations via its RPC interface",
 			Destination: &useGCS,
+		},
+		cli.StringFlag{
+			Name:  resourcePartitionArgName,
+			Usage: "Resource partition GUID to assign UVM to",
 		},
 	}
 
@@ -92,14 +97,15 @@ func main() {
 
 	app.Before = func(c *cli.Context) error {
 		if !winapi.IsElevated() {
-			log.Fatal(c.App.Name + " must be run in an elevated context")
+			return fmt.Errorf(c.App.Name + " must be run in an elevated context")
 		}
 
+		lvl := logrus.WarnLevel
 		if debug {
-			logrus.SetLevel(logrus.DebugLevel)
-		} else {
-			logrus.SetLevel(logrus.WarnLevel)
+			// as a debugging tool, opt for more logs over less
+			lvl = logrus.TraceLevel
 		}
+		logrus.SetLevel(lvl)
 
 		return nil
 	}
@@ -110,6 +116,7 @@ func main() {
 }
 
 func setGlobalOptions(c *cli.Context, options *uvm.Options) {
+	// TODO: create appropriate spec for (conf) WCOW and handle annotations here
 	if c.GlobalIsSet(cpusArgName) {
 		options.ProcessorCount = int32(c.GlobalUint64(cpusArgName))
 	}
@@ -125,6 +132,14 @@ func setGlobalOptions(c *cli.Context, options *uvm.Options) {
 	if c.GlobalIsSet(enableDeferredCommitArgName) {
 		options.EnableDeferredCommit = c.GlobalBool(enableDeferredCommitArgName)
 	}
+	if c.GlobalIsSet(resourcePartitionArgName) {
+		rpID, err := guid.FromString(c.GlobalString(resourcePartitionArgName))
+		if err != nil {
+			logrus.Fatalf("Failed to parse resource partition GUID: %v", err)
+		}
+		options.ResourcePartitionID = &rpID
+	}
+	// TODO: create common arg for console pipe and set `uvmConsolePipe` as the default value
 	// Always set the console pipe in uvmboot, it helps with testing/debugging
 	options.ConsolePipe = uvmConsolePipe
 }

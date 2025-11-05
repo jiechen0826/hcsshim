@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           show-progress: false
 
@@ -59,7 +59,7 @@ jobs:
       # protobuild requires the code to be in $GOPATH to translate from github.com/Microsoft/hcsshim
       # to the correct path on disk
       - name: Checkout hcsshim
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: "${{ github.workspace }}/go/src/github.com/Microsoft/hcsshim"
           show-progress: false
@@ -117,7 +117,7 @@ jobs:
       GOPROXY: "https://proxy.golang.org,direct"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           show-progress: false
 
@@ -182,7 +182,7 @@ jobs:
     runs-on: "windows-2022"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           show-progress: false
 
@@ -237,7 +237,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           show-progress: false
 
@@ -248,9 +248,6 @@ jobs:
 
       - name: Install gotestsum
         run: go install gotest.tools/gotestsum@${{ env.GOTESTSUM_VERSION }}
-
-      - name: Test standard security policy
-        run: ${{ env.GOTESTSUM_CMD }} -timeout=30m -gcflags=all=-d=checkptr ./pkg/securitypolicy/...
 
       - name: Test rego security policy
         run: ${{ env.GOTESTSUM_CMD }} -tags=rego -timeout=30m -gcflags=all=-d=checkptr ./pkg/securitypolicy/...
@@ -279,7 +276,7 @@ jobs:
             runner: [self-hosted, 1ES.Pool=containerplat-github-runner-pool-east-us-2, 1ES.ImageOverride=github-mms-ws2022-containers-enabled]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           show-progress: false
 
@@ -314,6 +311,9 @@ jobs:
           & '${{ github.workspace }}/bin/psexec' -accepteula -nobanner cmd /c "exit 0"
 
       # run tests
+      - name: Test rego security policy
+        run: ${{ env.GOTESTSUM_CMD }} -tags=rego -timeout=30m -gcflags=all=-d=checkptr ./pkg/securitypolicy/...
+
       - name: Test repo
         run: ${{ env.GOTESTSUM_CMD }} -gcflags=all=-d=checkptr -tags admin -timeout=20m ./...
 
@@ -394,7 +394,7 @@ jobs:
         run: ${{ env.GO_BUILD_CMD }} -mod=mod -o sample-logging-driver.exe ./cri-containerd/helpers/log.go
         working-directory: test
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: ${{ github.event_name == 'pull_request' }}
         with:
           name: test_binaries_${{ matrix.name }}
@@ -415,7 +415,7 @@ jobs:
 
     steps:
       - name: Checkout hcsshim
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: src/github.com/Microsoft/hcsshim
           show-progress: false
@@ -447,7 +447,7 @@ jobs:
         working-directory: src/github.com/Microsoft/hcsshim
 
       - name: Checkout containerd
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: src/github.com/containerd/containerd
           repository: "containerd/containerd"
@@ -618,7 +618,7 @@ jobs:
     runs-on: "windows-2022"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           show-progress: false
 
@@ -675,7 +675,7 @@ jobs:
       - run: ${{ env.GO_BUILD_CMD }} ./internal/tools/zapdir
         name: Build zapdir.exe
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: ${{ github.event_name == 'pull_request' }}
         with:
           name: binaries
@@ -699,7 +699,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           show-progress: false
 

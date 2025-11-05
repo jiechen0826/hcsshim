@@ -105,6 +105,33 @@ const (
 
 	// LCOWPrivileged is used to specify that the container should be run in privileged mode.
 	LCOWPrivileged = "io.microsoft.virtualmachine.lcow.privileged"
+
+	// LCOWTeeLogPath specifies a path in the Linux uVM to write container's stdio to,
+	// in addition to the usual vsock pipes.
+	//
+	// Functionally, it is similar to `LogDirectory` and `LogPath` for CRI, but within the guest
+	// rather than on the host.
+	//
+	// See [LCOWTeeLogDirMount] for more info.
+	LCOWTeeLogPath = "io.microsoft.container.lcow.tee-log-path"
+
+	// LCOWLogPathMount is the destination to mount the log directory containing files specified
+	// by the [LCOWTeeLogPath] annotation in order to make them available within the container.
+	// The log directory is backed by the sandbox (pause container) scratch VHD, and can
+	// be considered a special case sandbox mount.
+	//
+	// For example, if container A has the annotation:
+	//
+	// 	"io.microsoft.container.lcow.tee-log-path" = "dir/a.logs"
+	//
+	// And container B has the annotation:
+	//
+	// 	"io.microsoft.container.lcow.tee-log-dir-mount" = "var/logs/containers"
+	//
+	// Then container B will be able to read the logs written to by container A at the path:
+	//
+	// 	/var/logs/containers/dir/a.logs
+	LCOWTeeLogDirMount = "io.microsoft.container.lcow.tee-log-dir-mount"
 )
 
 // LCOW multipod annotations enables multipod and warmpooling.
@@ -136,40 +163,57 @@ const (
 	// Only applies in SNP mode.
 	DmVerityRootFsVhd = "io.microsoft.virtualmachine.lcow.dmverity-rootfs-vhd"
 
-	// EncryptedScratchDisk indicates whether or not the container scratch disks
+	// LCOWEncryptedScratchDisk indicates whether or not the container scratch disks
 	// should be encrypted or not.
 	//
 	// LCOW only.
-	EncryptedScratchDisk = "io.microsoft.virtualmachine.storage.scratch.encrypted"
+	LCOWEncryptedScratchDisk = "io.microsoft.virtualmachine.storage.scratch.encrypted"
+	// Deprecated: use [LCOWEncryptedScratchDisk] instead.
+	EncryptedScratchDisk = LCOWEncryptedScratchDisk
 
-	// GuestStateFile specifies the path of the vmgs file to use if required. Only applies in SNP mode.
-	GuestStateFile = "io.microsoft.virtualmachine.lcow.gueststatefile"
+	// LCOWGuestStateFile specifies the path of the vmgs file to use if required. Only applies in SNP mode.
+	LCOWGuestStateFile = "io.microsoft.virtualmachine.lcow.gueststatefile"
+	// Deprecated: use [LCOWGuestStateFile] instead.
+	GuestStateFile = LCOWGuestStateFile
 
-	// HclEnabled specifies whether to enable the host compatibility layer.
-	HclEnabled = "io.microsoft.virtualmachine.lcow.hcl-enabled"
+	// LCOWHclEnabled specifies whether to enable the host compatibility layer.
+	LCOWHclEnabled = "io.microsoft.virtualmachine.lcow.hcl-enabled"
+	// Deprecated: use [LCOWHclEnabled] instead.
+	HclEnabled = LCOWHclEnabled
 
-	// HostAMDCertificate specifies the filename of the AMD certificates to be passed to UVM.
+	// LCOWHostAMDCertificate specifies the filename of the AMD certificates to be passed to UVM.
 	// The certificate is expected to be located in the same directory as the shim executable.
-	HostAMDCertificate = "io.microsoft.virtualmachine.lcow.amd-certificate"
+	LCOWHostAMDCertificate = "io.microsoft.virtualmachine.lcow.amd-certificate"
+	// Deprecated: use [LCOWHostAMDCertificate] instead.
+	HostAMDCertificate = LCOWHostAMDCertificate
 
 	// NoSecurityHardware allows us, when it is set to true, to do testing and development without requiring SNP hardware.
-	NoSecurityHardware = "io.microsoft.virtualmachine.lcow.no_security_hardware"
+	//
+	NoSecurityHardware = "io.microsoft.virtualmachine.no_security_hardware"
 
-	// SecurityPolicy is used to specify a security policy for opengcs to enforce.
-	SecurityPolicy = "io.microsoft.virtualmachine.lcow.securitypolicy"
+	// LCOWSecurityPolicy is used to specify a security policy for opengcs to enforce.
+	LCOWSecurityPolicy = "io.microsoft.virtualmachine.lcow.securitypolicy"
+	// Deprecated: use [LCOWSecurityPolicy] instead.
+	SecurityPolicy = LCOWSecurityPolicy
 
-	// SecurityPolicyEnforcer is used to specify which enforcer to initialize (open-door, standard or rego).
+	// LCOWSecurityPolicyEnforcer is used to specify which enforcer to initialize (open-door, standard or rego).
 	// This allows for better fallback mechanics.
-	SecurityPolicyEnforcer = "io.microsoft.virtualmachine.lcow.enforcer"
+	LCOWSecurityPolicyEnforcer = "io.microsoft.virtualmachine.lcow.enforcer"
+	// Deprecated: use [LCOWSecurityPolicyEnforcer] instead.
+	SecurityPolicyEnforcer = LCOWSecurityPolicyEnforcer
 
-	// UVMSecurityPolicyEnv specifies if confidential containers' related information
+	// LCOWSecurityPolicyEnv specifies if confidential containers' related information
 	// should be written to containers' rootfs. The filenames and location are defined
 	// by securitypolicy.PolicyFilename, securitypolicy.HostAMDCertFilename and
 	// securitypolicy.ReferenceInfoFilename.
-	UVMSecurityPolicyEnv = "io.microsoft.virtualmachine.lcow.securitypolicy.env"
+	LCOWSecurityPolicyEnv = "io.microsoft.virtualmachine.lcow.securitypolicy.env"
+	// Deprecated: use [LCOWSecurityPolicyEnv] instead.
+	UVMSecurityPolicyEnv = LCOWSecurityPolicyEnv
 
-	// UVMReferenceInfoFile specifies the filename of a signed UVM reference file to be passed to UVM.
-	UVMReferenceInfoFile = "io.microsoft.virtualmachine.lcow.uvm-reference-info-file"
+	// LCOWReferenceInfoFile specifies the filename of a signed UVM reference file to be passed to UVM.
+	LCOWReferenceInfoFile = "io.microsoft.virtualmachine.lcow.uvm-reference-info-file"
+	// Deprecated: use [LCOWReferenceInfoFile] instead.
+	UVMReferenceInfoFile = LCOWReferenceInfoFile
 )
 
 // WCOW container annotations.
@@ -197,6 +241,45 @@ const (
 	// ContainerProcessDumpLocation path. When the maximum value is exceeded, the oldest dump file in the
 	// folder will be replaced by the new dump file. The default value is 10.
 	WCOWProcessDumpCount = "io.microsoft.wcow.processdumpcount"
+)
+
+// WCOW confidential container related annotations
+const (
+	// WCOWGuestStateFile allows overriding the default VMGS path.
+	WCOWGuestStateFile = "io.microsoft.virtualmachine.wcow.gueststatefile"
+
+	// WCOWSecurityPolicy is used to specify a security policy for WCOW containers to enforce.
+	WCOWSecurityPolicy = "io.microsoft.virtualmachine.wcow.securitypolicy"
+
+	// WCOWSecurityPolicyEnforcer is used to specify which enforcer to
+	// initialize for WCOW (open-door, standard or rego).  This allows for better
+	// fallback mechanics.
+	WCOWSecurityPolicyEnforcer = "io.microsoft.virtualmachine.wcow.enforcer"
+
+	// The certificate is expected to be located in the same directory as the shim executable.
+	WCOWHostAMDCertificate = "io.microsoft.virtualmachine.wcow.amd-certificate"
+
+	// WCOWSecurityPolicyEnv specifies if confidential containers' related information
+	// should be written to containers' rootfs. The filenames and location are defined
+	// by securitypolicy.PolicyFilename, securitypolicy.HostAMDCertFilename and
+	// securitypolicy.ReferenceInfoFilename.
+	WCOWSecurityPolicyEnv = "io.microsoft.virtualmachine.wcow.securitypolicy.env"
+
+	// WCOWReferenceInfoFile specifies the filename of a signed UVM reference file to be passed to UVM.
+	WCOWReferenceInfoFile = "io.microsoft.virtualmachine.wcow.uvm-reference-info-file"
+
+	// WCOWIsolationType allows overriding isolation type of a confidential pod.
+	// Default is "SecureNestedPaging" and valid override values are
+	// "VirtualizationBasedSecurity" and "GuestStateOnly"
+	WCOWIsolationType = "io.microsoft.virtualmachine.wcow.isolation_type"
+
+	// Allows disabling secure boot for testing and debugging scenarios, secure boot doesn't apply to confidential LCOW so
+	// this is a WCOW only config
+	WCOWDisableSecureBoot = "io.microsoft.virtualmachine.wcow.no_secure_boot"
+
+	// Attaches the EFI/boot VHD in the writable mode (instead of the default read-only mode). This is usually required
+	// when debugging boot to capture bootstat traces.
+	WCOWWritableEFI = "io.microsoft.virtualmachine.wcow.writable_efi"
 )
 
 // WCOW host process container annotations.
@@ -232,6 +315,7 @@ const (
 // uVM CPU annotations.
 const (
 	// CPUGroupID specifies the cpugroup ID that a UVM should be assigned to, if any.
+	// Passing this annotation together with ResourcePartitionID will result in an error.
 	CPUGroupID = "io.microsoft.virtualmachine.cpugroup.id"
 
 	// ProcessorCount overrides the hypervisor isolated vCPU count set
@@ -298,6 +382,7 @@ const (
 
 // uVM NUMA annotations.
 const (
+	// NumaMaximumProcessorsPerNode is the maximum number of processors per vNUMA node.
 	// This should be used for implicit vNUMA topology.
 	NumaMaximumProcessorsPerNode = "io.microsoft.virtualmachine.computetopology.processor.numa.max-processors-per-node"
 
@@ -327,6 +412,11 @@ const (
 	// number of memory blocks at slice index 1, etc.
 	// This should be used for explicit vNUMA topology.
 	NumaCountOfMemoryBlocks = "io.microsoft.virtualmachine.computetopology.numa.count-of-memory-blocks"
+
+	// ResourcePartitionID is a GUID string representing a resource partition ID the UVM should be associated with.
+	// Resource partition will have its own CPU group, as a result this annotation cannot be used together with
+	// CPUGroupID and will yield an error.
+	ResourcePartitionID = "io.microsoft.virtualmachine.resource-partition-id"
 )
 
 // uVM storage (Quality of Service) annotations.

@@ -22,9 +22,15 @@ import (
 
 	"github.com/Microsoft/cosesign1go/pkg/cosesign1"
 	didx509resolver "github.com/Microsoft/didx509go/pkg/did-x509-resolver"
-	"github.com/Microsoft/hcsshim/internal/bridgeutils/gcserr"
+	cgroups "github.com/containerd/cgroups/v3/cgroup1"
+	cgroup1stats "github.com/containerd/cgroups/v3/cgroup1/stats"
+	"github.com/mattn/go-shellwords"
+	"github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
 
-	// Add cgroups import for virtual pod support
+	"github.com/Microsoft/hcsshim/internal/bridgeutils/gcserr"
 	"github.com/Microsoft/hcsshim/internal/debug"
 	"github.com/Microsoft/hcsshim/internal/guest/policy"
 	"github.com/Microsoft/hcsshim/internal/guest/prot"
@@ -39,19 +45,13 @@ import (
 	"github.com/Microsoft/hcsshim/internal/guest/storage/scsi"
 	"github.com/Microsoft/hcsshim/internal/guest/transport"
 	"github.com/Microsoft/hcsshim/internal/log"
+	"github.com/Microsoft/hcsshim/internal/logfields"
 	"github.com/Microsoft/hcsshim/internal/oci"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestrequest"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
 	"github.com/Microsoft/hcsshim/internal/verity"
 	"github.com/Microsoft/hcsshim/pkg/annotations"
 	"github.com/Microsoft/hcsshim/pkg/securitypolicy"
-	cgroups "github.com/containerd/cgroups/v3/cgroup1"
-	cgroup1stats "github.com/containerd/cgroups/v3/cgroup1/stats"
-	"github.com/mattn/go-shellwords"
-	"github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
 )
 
 // UVMContainerID is the ContainerID that will be sent on any prot.MessageBase
@@ -323,6 +323,30 @@ func setupSandboxMountsPath(id string) (err error) {
 	return storage.MountRShared(mountPath)
 }
 
+func setupSandboxTmpfsMountsPath(id string) (err error) {
+	tmpfsDir := specGuest.SandboxTmpfsMountsDir(id)
+	if err := os.MkdirAll(tmpfsDir, 0755); err != nil {
+		return errors.Wrapf(err, "failed to create sandbox tmpfs mounts dir in sandbox %v", id)
+	}
+
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(tmpfsDir)
+		}
+	}()
+
+	// mount a tmpfs at the tmpfsDir
+	// this ensures that the tmpfsDir is a mount point and not just a directory
+	// we don't care if it is already mounted, so ignore EBUSY
+	if err := unix.Mount("tmpfs", tmpfsDir, "tmpfs", 0, ""); err != nil && !errors.Is(err, unix.EBUSY) {
+		return errors.Wrapf(err, "failed to mount tmpfs at %s", tmpfsDir)
+	}
+
+	//TODO: should tmpfs be mounted as noexec?
+
+	return storage.MountRShared(tmpfsDir)
+}
+
 func setupSandboxHugePageMountsPath(id string) error {
 	mountPath := specGuest.HugePagesMountsDir(id)
 	if err := os.MkdirAll(mountPath, 0755); err != nil {
@@ -331,6 +355,24 @@ func setupSandboxHugePageMountsPath(id string) error {
 
 	return storage.MountRShared(mountPath)
 }
+
+// setupSandboxLogDir creates the directory to house all redirected stdio logs from containers.
+//
+// Virtual pod aware.
+func setupSandboxLogDir(sandboxID, virtualSandboxID string) error {
+	mountPath := specGuest.SandboxLogsDir(sandboxID, virtualSandboxID)
+	if err := mkdirAllModePerm(mountPath); err != nil {
+		id := sandboxID
+		if virtualSandboxID != "" {
+			id = virtualSandboxID
+		}
+		return errors.Wrapf(err, "failed to create sandbox logs dir in sandbox %v", id)
+	}
+	return nil
+}
+
+// TODO: unify workload and standalone logic for non-sandbox features (e.g., block devices, huge pages, uVM mounts)
+// TODO(go1.24): use [os.Root] instead of `!strings.HasPrefix(<path>, <root>)`
 
 func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VMHostedContainerSettingsV2) (_ *Container, err error) {
 	criType, isCRI := settings.OCISpecification.Annotations[annotations.KubernetesContainerType]
@@ -449,16 +491,13 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 
 			if isVirtualPod {
 				// For virtual pods, create virtual pod specific paths
-				err = setupVirtualPodMountsPath(virtualPodID, id)
-				if err != nil {
+				if err = setupVirtualPodMountsPath(virtualPodID); err != nil {
 					return nil, err
 				}
-				// Create hugepages path for virtual pod
-				mountPath := specGuest.VirtualPodHugePagesMountsDir(virtualPodID)
-				if err := os.MkdirAll(mountPath, 0755); err != nil {
-					return nil, errors.Wrapf(err, "failed to create virtual pod hugepage mounts dir %v", virtualPodID)
+				if err = setupVirtualPodTmpfsMountsPath(virtualPodID); err != nil {
+					return nil, err
 				}
-				if err := storage.MountRShared(mountPath); err != nil {
+				if err = setupVirtualPodHugePageMountsPath(virtualPodID); err != nil {
 					return nil, err
 				}
 			} else {
@@ -466,9 +505,15 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 				if err = setupSandboxMountsPath(id); err != nil {
 					return nil, err
 				}
+				if err = setupSandboxTmpfsMountsPath(id); err != nil {
+					return nil, err
+				}
 				if err = setupSandboxHugePageMountsPath(id); err != nil {
 					return nil, err
 				}
+			}
+			if err = setupSandboxLogDir(id, virtualPodID); err != nil {
+				return nil, err
 			}
 
 			if err := policy.ExtendPolicyWithNetworkingMounts(id, h.securityPolicyEnforcer, settings.OCISpecification); err != nil {
@@ -480,8 +525,7 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 			if !ok || sid == "" {
 				return nil, errors.Errorf("unsupported 'io.kubernetes.cri.sandbox-id': '%s'", sid)
 			}
-			err = setupWorkloadContainerSpec(ctx, sid, id, settings.OCISpecification, settings.OCIBundlePath)
-			if err != nil {
+			if err = setupWorkloadContainerSpec(ctx, sid, id, settings.OCISpecification, settings.OCIBundlePath); err != nil {
 				return nil, err
 			}
 
@@ -522,7 +566,18 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 		}
 	}
 
-	user, groups, umask, err := h.securityPolicyEnforcer.GetUserInfo(id, settings.OCISpecification.Process)
+	// don't specialize tee logs (both files and mounts) just for workload containers
+	// add log directory mount before enforcing (mount) policy
+	if logDirMount := settings.OCISpecification.Annotations[annotations.LCOWTeeLogDirMount]; logDirMount != "" {
+		settings.OCISpecification.Mounts = append(settings.OCISpecification.Mounts, specs.Mount{
+			Destination: logDirMount,
+			Type:        "bind",
+			Source:      specGuest.SandboxLogsDir(sandboxID, virtualPodID),
+			Options:     []string{"bind"},
+		})
+	}
+
+	user, groups, umask, err := h.securityPolicyEnforcer.GetUserInfo(settings.OCISpecification.Process, settings.OCISpecification.Root.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -558,6 +613,30 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 		c.vsock = h.devNullTransport
 	}
 
+	// delay creating the directory to house the container's stdio until after we've verified
+	// policy on log settings.
+	// TODO: is using allowStdio appropriate here, since longs aren't leaving the uVM?
+	if logPath := settings.OCISpecification.Annotations[annotations.LCOWTeeLogPath]; logPath != "" {
+		if !allowStdio {
+			return nil, errors.Errorf("teeing container stdio to log path %q denied due to policy not allowing stdio access", logPath)
+		}
+
+		c.logPath = specGuest.SandboxLogPath(sandboxID, virtualPodID, logPath)
+		// verify the logpath is still under the correct directory
+		if !strings.HasPrefix(c.logPath, specGuest.SandboxLogsDir(sandboxID, virtualPodID)) {
+			return nil, errors.Errorf("log path %v is not within sandbox's log dir", c.logPath)
+		}
+
+		dir := filepath.Dir(c.logPath)
+		log.G(ctx).WithFields(logrus.Fields{
+			logfields.Path:        dir,
+			logfields.ContainerID: id,
+		}).Debug("creating container log file parent directory in uVM")
+		if err := mkdirAllModePerm(dir); err != nil {
+			return nil, errors.Wrapf(err, "failed to create log file parent directory: %s", dir)
+		}
+	}
+
 	if envToKeep != nil {
 		settings.OCISpecification.Process.Env = []string(envToKeep)
 	}
@@ -573,9 +652,9 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 	// containing the files is exposed via UVM_SECURITY_CONTEXT_DIR env var.
 	// It may be an error to have a security policy but not expose it to the
 	// container as in that case it can never be checked as correct by a verifier.
-	if oci.ParseAnnotationsBool(ctx, settings.OCISpecification.Annotations, annotations.UVMSecurityPolicyEnv, true) {
+	if oci.ParseAnnotationsBool(ctx, settings.OCISpecification.Annotations, annotations.LCOWSecurityPolicyEnv, true) {
 		encodedPolicy := h.securityPolicyEnforcer.EncodedSecurityPolicy()
-		hostAMDCert := settings.OCISpecification.Annotations[annotations.HostAMDCertificate]
+		hostAMDCert := settings.OCISpecification.Annotations[annotations.LCOWHostAMDCertificate]
 		if len(encodedPolicy) > 0 || len(hostAMDCert) > 0 || len(h.uvmReferenceInfo) > 0 {
 			// Use os.MkdirTemp to make sure that the directory is unique.
 			securityContextDir, err := os.MkdirTemp(settings.OCISpecification.Root.Path, securitypolicy.SecurityContextDirTemplate)
@@ -643,10 +722,8 @@ func (h *Host) CreateContainer(ctx context.Context, id string, settings *prot.VM
 	// Sandbox or standalone, move the networks to the container namespace
 	if criType == "sandbox" || !isCRI {
 		ns, err := getNetworkNamespace(namespaceID)
-		log.G(ctx).Debugf("getNetworkNamespace(%s) returned %v, cflick", namespaceID, ns)
 		// skip network activity for sandbox containers marked with skip uvm networking annotation
 		if isCRI && err != nil && !strings.EqualFold(settings.OCISpecification.Annotations[annotations.SkipPodNetworking], "true") {
-			// return nil, err
 			return nil, err
 		}
 		if ns != nil {
@@ -802,17 +879,7 @@ func (h *Host) SignalContainerProcess(ctx context.Context, containerID string, p
 		return err
 	}
 
-	signalingInitProcess := (processID == c.initProcess.pid)
-
-	// Don't allow signalProcessV2 to route around container shutdown policy
-	// Sending SIGTERM or SIGKILL to a containers init process will shut down
-	// the container.
-	if signalingInitProcess {
-		if (signal == unix.SIGTERM) || (signal == unix.SIGKILL) {
-			graceful := (signal == unix.SIGTERM)
-			return h.ShutdownContainer(ctx, containerID, graceful)
-		}
-	}
+	signalingInitProcess := processID == c.initProcess.pid
 
 	startupArgList := p.(*containerProcess).spec.Args
 	err = h.securityPolicyEnforcer.EnforceSignalContainerProcessPolicy(ctx, containerID, signal, signalingInitProcess, startupArgList)
@@ -872,7 +939,7 @@ func (h *Host) ExecProcess(ctx context.Context, containerID string, params prot.
 			var umask string
 			var allowStdioAccess bool
 
-			user, groups, umask, err = h.securityPolicyEnforcer.GetUserInfo(containerID, params.OCIProcess)
+			user, groups, umask, err = h.securityPolicyEnforcer.GetUserInfo(params.OCIProcess, c.spec.Root.Path)
 			if err != nil {
 				return 0, err
 			}
@@ -1540,17 +1607,48 @@ func (h *Host) cleanupVirtualPod(virtualSandboxID string) {
 }
 
 // setupVirtualPodMountsPath creates mount directories for virtual pods
-func setupVirtualPodMountsPath(virtualSandboxID, masterSandboxID string) (err error) {
+func setupVirtualPodMountsPath(virtualSandboxID string) (err error) {
 	// Create virtual pod specific mount path using the new path generation functions
 	mountPath := specGuest.VirtualPodMountsDir(virtualSandboxID)
 	if err := os.MkdirAll(mountPath, 0755); err != nil {
-		return errors.Wrapf(err, "failed to create virtual pod sandboxMounts dir %v", virtualSandboxID)
+		return errors.Wrapf(err, "failed to create virtual pod mounts dir in sandbox %v", virtualSandboxID)
 	}
 	defer func() {
 		if err != nil {
 			_ = os.RemoveAll(mountPath)
 		}
 	}()
+
+	return storage.MountRShared(mountPath)
+}
+
+func setupVirtualPodTmpfsMountsPath(virtualSandboxID string) (err error) {
+	tmpfsDir := specGuest.VirtualPodTmpfsMountsDir(virtualSandboxID)
+	if err := os.MkdirAll(tmpfsDir, 0755); err != nil {
+		return errors.Wrapf(err, "failed to create virtual pod tmpfs mounts dir in sandbox %v", virtualSandboxID)
+	}
+
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(tmpfsDir)
+		}
+	}()
+
+	// mount a tmpfs at the tmpfsDir
+	// this ensures that the tmpfsDir is a mount point and not just a directory
+	// we don't care if it is already mounted, so ignore EBUSY
+	if err := unix.Mount("tmpfs", tmpfsDir, "tmpfs", 0, ""); err != nil && !errors.Is(err, unix.EBUSY) {
+		return errors.Wrapf(err, "failed to mount tmpfs at %s", tmpfsDir)
+	}
+
+	return storage.MountRShared(tmpfsDir)
+}
+
+func setupVirtualPodHugePageMountsPath(virtualSandboxID string) error {
+	mountPath := specGuest.VirtualPodHugePagesMountsDir(virtualSandboxID)
+	if err := os.MkdirAll(mountPath, 0755); err != nil {
+		return errors.Wrapf(err, "failed to create virtual pod hugepage mounts dir %v", virtualSandboxID)
+	}
 
 	return storage.MountRShared(mountPath)
 }

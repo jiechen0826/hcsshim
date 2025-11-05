@@ -15,6 +15,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/gcs/prot"
 	shimlog "github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/oc"
+	"github.com/Microsoft/hcsshim/internal/pspdriver"
 	"github.com/Microsoft/hcsshim/pkg/securitypolicy"
 	"github.com/sirupsen/logrus"
 	"go.opencensus.io/trace"
@@ -150,7 +151,6 @@ func main() {
 		logrus.Fatal(err)
 	}
 	logrus.SetLevel(level)
-	logrus.SetOutput(logFileHandle)
 	trace.ApplyConfig(trace.Config{DefaultSampler: trace.AlwaysSample()})
 	trace.RegisterExporter(&oc.LogrusExporter{})
 
@@ -214,26 +214,19 @@ func main() {
 		return
 	}
 
-	// gcs-sidecar can be used for non-confidentail hyperv wcow
-	// as well. So we do not always want to check for initialPolicyStance
-	var initialEnforcer securitypolicy.SecurityPolicyEnforcer
-	// TODO (kiashok/Mahati): The initialPolicyStance is set to allow
-	// only for dev. This will eventually be set to allow/deny depending on
-	// on whether SNP is supported or not.
-	initialPolicyStance := "allow"
-	switch initialPolicyStance {
-	case "allow":
-		initialEnforcer = &securitypolicy.OpenDoorSecurityPolicyEnforcer{}
-		logrus.Tracef("initial-policy-stance: allow")
-	case "deny":
-		initialEnforcer = &securitypolicy.ClosedDoorSecurityPolicyEnforcer{}
-		logrus.Tracef("initial-policy-stance: deny")
-	default:
-		logrus.Error("unknown initial-policy-stance")
+	if err := pspdriver.StartPSPDriver(ctx); err != nil {
+		// When error happens, pspdriver.GetPspDriverError() returns true.
+		// In that case, gcs-sidecar should keep the initial "deny" policy
+		// and reject all requests from the host.
+		logrus.WithError(err).Errorf("failed to start PSP driver")
 	}
 
+	// Use "deny" policy as initial enforcer.
+	// This is updated later with user provided policy.
+	initialEnforcer := &securitypolicy.ClosedDoorSecurityPolicyEnforcer{}
+
 	// 3. Create bridge and initializa
-	brdg := sidecar.NewBridge(shimCon, gcsCon, initialEnforcer)
+	brdg := sidecar.NewBridge(shimCon, gcsCon, initialEnforcer, logFileHandle)
 	brdg.AssignHandlers()
 
 	// 3. Listen and serve for hcsshim requests.

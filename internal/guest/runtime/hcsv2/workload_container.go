@@ -37,9 +37,26 @@ func updateSandboxMounts(sbid string, spec *oci.Spec) error {
 	virtualSandboxID := spec.Annotations[annotations.VirtualPodID]
 
 	for i, m := range spec.Mounts {
-		if strings.HasPrefix(m.Source, guestpath.SandboxMountPrefix) {
+		if !strings.HasPrefix(m.Source, guestpath.SandboxMountPrefix) &&
+			!strings.HasPrefix(m.Source, guestpath.SandboxTmpfsMountPrefix) {
+			continue
+		}
+
+		var sandboxSource string
+		// if using `sandbox-tmp://` prefix, we mount a tmpfs in sandboxTmpfsMountsDir
+		if strings.HasPrefix(m.Source, guestpath.SandboxTmpfsMountPrefix) {
 			// Use virtual pod aware mount source
-			sandboxSource := specGuest.VirtualPodAwareSandboxMountSource(sbid, virtualSandboxID, m.Source)
+			sandboxSource = specGuest.VirtualPodAwareSandboxTmpfsMountSource(sbid, virtualSandboxID, m.Source)
+			expectedMountsDir := specGuest.VirtualPodAwareSandboxTmpfsMountsDir(sbid, virtualSandboxID)
+
+			// filepath.Join cleans the resulting path before returning, so it would resolve the relative path if one was given.
+			// Hence, we need to ensure that the resolved path is still under the correct directory
+			if !strings.HasPrefix(sandboxSource, expectedMountsDir) {
+				return errors.Errorf("mount path %v for mount %v is not within sandbox's tmpfs mounts dir", sandboxSource, m.Source)
+			}
+		} else {
+			// Use virtual pod aware mount source
+			sandboxSource = specGuest.VirtualPodAwareSandboxMountSource(sbid, virtualSandboxID, m.Source)
 			expectedMountsDir := specGuest.VirtualPodAwareSandboxMountsDir(sbid, virtualSandboxID)
 
 			// filepath.Join cleans the resulting path before returning, so it would resolve the relative path if one was given.
@@ -47,14 +64,14 @@ func updateSandboxMounts(sbid string, spec *oci.Spec) error {
 			if !strings.HasPrefix(sandboxSource, expectedMountsDir) {
 				return errors.Errorf("mount path %v for mount %v is not within sandbox's mounts dir", sandboxSource, m.Source)
 			}
+		}
 
-			spec.Mounts[i].Source = sandboxSource
+		spec.Mounts[i].Source = sandboxSource
 
-			_, err := os.Stat(sandboxSource)
-			if os.IsNotExist(err) {
-				if err := mkdirAllModePerm(sandboxSource); err != nil {
-					return err
-				}
+		_, err := os.Stat(sandboxSource)
+		if os.IsNotExist(err) {
+			if err := mkdirAllModePerm(sandboxSource); err != nil {
+				return err
 			}
 		}
 	}
@@ -66,29 +83,31 @@ func updateHugePageMounts(sbid string, spec *oci.Spec) error {
 	virtualSandboxID := spec.Annotations[annotations.VirtualPodID]
 
 	for i, m := range spec.Mounts {
-		if strings.HasPrefix(m.Source, guestpath.HugePagesMountPrefix) {
-			// Use virtual pod aware hugepages directory
-			mountsDir := specGuest.VirtualPodAwareHugePagesMountsDir(sbid, virtualSandboxID)
-			subPath := strings.TrimPrefix(m.Source, guestpath.HugePagesMountPrefix)
-			pageSize := strings.Split(subPath, string(os.PathSeparator))[0]
-			hugePageMountSource := filepath.Join(mountsDir, subPath)
+		if !strings.HasPrefix(m.Source, guestpath.HugePagesMountPrefix) {
+			continue
+		}
 
-			// filepath.Join cleans the resulting path before returning so it would resolve the relative path if one was given.
-			// Hence, we need to ensure that the resolved path is still under the correct directory
-			if !strings.HasPrefix(hugePageMountSource, mountsDir) {
-				return errors.Errorf("mount path %v for mount %v is not within hugepages's mounts dir", hugePageMountSource, m.Source)
+		// Use virtual pod aware hugepages directory
+		mountsDir := specGuest.VirtualPodAwareHugePagesMountsDir(sbid, virtualSandboxID)
+		subPath := strings.TrimPrefix(m.Source, guestpath.HugePagesMountPrefix)
+		pageSize := strings.Split(subPath, string(os.PathSeparator))[0]
+		hugePageMountSource := filepath.Join(mountsDir, subPath)
+
+		// filepath.Join cleans the resulting path before returning so it would resolve the relative path if one was given.
+		// Hence, we need to ensure that the resolved path is still under the correct directory
+		if !strings.HasPrefix(hugePageMountSource, mountsDir) {
+			return errors.Errorf("mount path %v for mount %v is not within hugepages's mounts dir", hugePageMountSource, m.Source)
+		}
+
+		spec.Mounts[i].Source = hugePageMountSource
+
+		_, err := os.Stat(hugePageMountSource)
+		if os.IsNotExist(err) {
+			if err := mkdirAllModePerm(hugePageMountSource); err != nil {
+				return err
 			}
-
-			spec.Mounts[i].Source = hugePageMountSource
-
-			_, err := os.Stat(hugePageMountSource)
-			if os.IsNotExist(err) {
-				if err := mkdirAllModePerm(hugePageMountSource); err != nil {
-					return err
-				}
-				if err := unix.Mount("none", hugePageMountSource, "hugetlbfs", 0, "pagesize="+pageSize); err != nil {
-					return errors.Errorf("mount operation failed for %v failed with error %v", hugePageMountSource, err)
-				}
+			if err := unix.Mount("none", hugePageMountSource, "hugetlbfs", 0, "pagesize="+pageSize); err != nil {
+				return errors.Errorf("mount operation failed for %v failed with error %v", hugePageMountSource, err)
 			}
 		}
 	}
@@ -236,6 +255,25 @@ func setupWorkloadContainerSpec(ctx context.Context, sbid, id string, spec *oci.
 			if err := addNvidiaDeviceHook(ctx, spec, ociBundlePath); err != nil {
 				return err
 			}
+
+			// The NVIDIA device hook `nvidia-container-cli` adds `rw` permissions for the
+			// GPU and ctl nodes (`c 195:*`) to the  devices allow list, but CUDA apparently also
+			// needs `rwm` permission for other device nodes (e.g., `c 235`)
+			//
+			// Grant `rwm` to all character devices (`c *:* rwm`) to avoid hard coding exact node
+			// numbers, which are unknown before the driver runs (GPU devices are presented as I2C
+			// devices initially) or could change with driver implementation.
+			//
+			// Note: runc already grants mknod, `c *:* m`, so this really adds `rw` permissions for
+			// all character devices:
+			// https://github.com/opencontainers/runc/blob/6bae6cad4759a5b3537d550f43ea37d51c6b518a/libcontainer/specconv/spec_linux.go#L205-L222
+			spec.Linux.Resources.Devices = append(spec.Linux.Resources.Devices,
+				oci.LinuxDeviceCgroup{
+					Allow:  true,
+					Type:   "c",
+					Access: "rwm",
+				},
+			)
 		}
 		// add other assigned devices to the spec
 		if err := specGuest.AddAssignedDevice(ctx, spec); err != nil {
