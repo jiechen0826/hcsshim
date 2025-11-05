@@ -4,6 +4,7 @@ package uvm
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"maps"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Microsoft/go-winio"
 	"github.com/Microsoft/go-winio/pkg/guid"
+	"github.com/Microsoft/go-winio/vhd"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"go.opencensus.io/trace"
@@ -27,17 +29,33 @@ import (
 	"github.com/Microsoft/hcsshim/internal/uvm/scsi"
 	"github.com/Microsoft/hcsshim/internal/wclayer"
 	"github.com/Microsoft/hcsshim/osversion"
+	"github.com/Microsoft/hcsshim/pkg/securitypolicy"
+)
+
+var (
+	// A predefined GUID for UtilityVMs to identify a scratch VHD that is completely empty/unformatted.
+	// This GUID is set in the metadata of the VHD and thus can be reliably used to identify the disk.
+	// a7b3c5d1-4e2f-4a8b-9c6d-1e3f5a7b9c2d
+	unformattedScratchIdentifier = &guid.GUID{
+		Data1: 0xa7b3c5d1,
+		Data2: 0x4e2f,
+		Data3: 0x4a8b,
+		Data4: [8]byte{0x9c, 0x6d, 0x1e, 0x3f, 0x5a, 0x7b, 0x9c, 0x2d},
+	}
 )
 
 type ConfidentialWCOWOptions struct {
-	GuestStateFilePath    string // The vmgs file path
-	SecurityPolicyEnabled bool   // Set when there is a security policy to apply on actual SNP hardware, use this rathen than checking the string length
-	SecurityPolicy        string // Optional security policy
+	GuestStateFilePath     string // The vmgs file path
+	SecurityPolicyEnabled  bool   // Set when there is a security policy to apply on actual SNP hardware, use this rathen than checking the string length
+	SecurityPolicy         string // Optional security policy
+	SecurityPolicyEnforcer string // Set which security policy enforcer to use (open door or rego). This allows for better fallback mechanic.
+	UVMReferenceInfoFile   string // Path to the file that contains the signed UVM measurements
 
 	/* Below options are only included for testing/debugging purposes - shouldn't be used in regular scenarios */
 	IsolationType      string
 	DisableSecureBoot  bool
 	FirmwareParameters string
+	WritableEFI        bool
 }
 
 // OptionsWCOW are the set of options passed to CreateWCOW() to create a utility vm.
@@ -55,6 +73,26 @@ type OptionsWCOW struct {
 
 	// AdditionalRegistryKeys are Registry keys and their values to additionally add to the uVM.
 	AdditionalRegistryKeys []hcsschema.RegistryValue
+}
+
+func defaultConfidentialWCOWOSBootFilesPath() string {
+	return filepath.Join(filepath.Dir(os.Args[0]), "WindowsBootFiles", "confidential")
+}
+
+func GetDefaultConfidentialVMGSPath() string {
+	return filepath.Join(defaultConfidentialWCOWOSBootFilesPath(), "cwcow.snp.vmgs")
+}
+
+func GetDefaultConfidentialBootCIMPath() string {
+	return filepath.Join(defaultConfidentialWCOWOSBootFilesPath(), "rootfs.vhd")
+}
+
+func GetDefaultConfidentialEFIPath() string {
+	return filepath.Join(defaultConfidentialWCOWOSBootFilesPath(), "boot.vhd")
+}
+
+func GetDefaultReferenceInfoFilePath() string {
+	return filepath.Join(defaultConfidentialWCOWOSBootFilesPath(), "reference_info.cose")
 }
 
 // NewDefaultOptionsWCOW creates the default options for a bootable version of
@@ -200,9 +238,8 @@ func prepareCommonConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWC
 			RegistryChanges: &registryChanges,
 			ComputeTopology: &hcsschema.Topology{
 				Memory: &hcsschema.VirtualMachineMemory{
-					SizeInMB:        memorySizeInMB,
-					AllowOvercommit: opts.AllowOvercommit,
-					// EnableHotHint is not compatible with physical.
+					SizeInMB:             memorySizeInMB,
+					AllowOvercommit:      opts.AllowOvercommit,
 					EnableHotHint:        opts.AllowOvercommit,
 					EnableDeferredCommit: opts.EnableDeferredCommit,
 					LowMMIOGapInMB:       opts.LowMMIOGapInMB,
@@ -221,6 +258,9 @@ func prepareCommonConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWC
 						ServiceTable:                  make(map[string]hcsschema.HvSocketServiceConfig),
 					},
 				},
+				VirtualSmb: &hcsschema.VirtualSmb{
+					DirectFileMappingInMB: 1024, // Sensible default, but could be a tuning parameter somewhere
+				},
 			},
 		},
 	}
@@ -229,6 +269,11 @@ func prepareCommonConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWC
 	if numa != nil || numaProcessors != nil {
 		firmwareFallbackMeasured := hcsschema.VirtualSlitType_FIRMWARE_FALLBACK_MEASURED
 		doc.VirtualMachine.ComputeTopology.Memory.SlitType = &firmwareFallbackMeasured
+	}
+
+	if opts.ResourcePartitionID != nil {
+		// TODO (maksiman): assign pod to resource partition and potentially do an OS version check before that
+		log.G(ctx).WithField("resource-partition-id", opts.ResourcePartitionID.String()).Debug("setting resource partition ID")
 	}
 
 	maps.Copy(doc.VirtualMachine.Devices.HvSocket.HvSocketConfig.ServiceTable, opts.AdditionalHyperVConfig)
@@ -315,12 +360,23 @@ func prepareSecurityConfigDoc(ctx context.Context, uvm *UtilityVM, opts *Options
 		}
 	}
 
+	policyDigest, err := securitypolicy.NewSecurityPolicyDigest(opts.SecurityPolicy)
+	if err != nil {
+		return nil, err
+	}
+
+	// HCS API expect a base64 encoded string as LaunchData. Internally it
+	// decodes it to bytes. SEV later returns the decoded byte blob as HostData
+	// field of the report.
+	hostData := base64.StdEncoding.EncodeToString(policyDigest)
+
 	enableHCL := true
 	doc.VirtualMachine.SecuritySettings = &hcsschema.SecuritySettings{
-		EnableTpm: false,
+		EnableTpm: false, // TPM MUST always remain false in confidential mode as per the design
 		Isolation: &hcsschema.IsolationSettings{
 			IsolationType: "SecureNestedPaging",
 			HclEnabled:    &enableHCL,
+			LaunchData:    hostData,
 		},
 	}
 
@@ -343,34 +399,47 @@ func prepareSecurityConfigDoc(ctx context.Context, uvm *UtilityVM, opts *Options
 		}
 	}
 
-	memoryBacking := hcsschema.MemoryBackingType_PHYSICAL
-	doc.VirtualMachine.ComputeTopology.Memory.Backing = &memoryBacking
 	doc.SchemaVersion = schemaversion.SchemaV25()
 	doc.VirtualMachine.Version = &hcsschema.Version{
 		Major: 11,
 		Minor: 0,
 	}
 
-	if err := wclayer.GrantVmAccess(ctx, uvm.id, opts.BootFiles.BlockCIMFiles.BootCIMVHDPath); err != nil {
-		return nil, errors.Wrap(err, "failed to grant vm access to boot CIM VHD")
-	}
-
+	// TODO(ambarve): only scratch VHD is unique per VM, EFI & Boot CIM VHDs are
+	// shared across UVMs, so we don't need to assign VM group access to them every
+	// time. It should have been done once while deploying the package.
 	if err := wclayer.GrantVmAccess(ctx, uvm.id, opts.BootFiles.BlockCIMFiles.EFIVHDPath); err != nil {
 		return nil, errors.Wrap(err, "failed to grant vm access to EFI VHD")
+	}
+
+	if err := wclayer.GrantVmAccess(ctx, uvm.id, opts.BootFiles.BlockCIMFiles.BootCIMVHDPath); err != nil {
+		return nil, errors.Wrap(err, "failed to grant vm access to Boot CIM VHD")
+	}
+
+	if err := wclayer.GrantVmAccess(ctx, uvm.id, opts.GuestStateFilePath); err != nil {
+		return nil, errors.Wrap(err, "failed to grant vm access to guest state file")
 	}
 
 	if err := wclayer.GrantVmAccess(ctx, uvm.id, opts.BootFiles.BlockCIMFiles.ScratchVHDPath); err != nil {
 		return nil, errors.Wrap(err, "failed to grant vm access to scratch VHD")
 	}
 
+	if err = vhd.SetVirtualDiskIdentifier(opts.BootFiles.BlockCIMFiles.ScratchVHDPath, *unformattedScratchIdentifier); err != nil {
+		return nil, fmt.Errorf("set scratch VHD identifier: %w", err)
+	}
+
+	// boot depends on scratch being attached at LUN 0, it MUST ALWAYS remain at LUN 0
 	doc.VirtualMachine.Devices.Scsi[guestrequest.ScsiControllerGuids[0]].Attachments["0"] = hcsschema.Attachment{
 		Path:  opts.BootFiles.BlockCIMFiles.ScratchVHDPath,
 		Type_: "VirtualDisk",
 	}
+
 	doc.VirtualMachine.Devices.Scsi[guestrequest.ScsiControllerGuids[0]].Attachments["1"] = hcsschema.Attachment{
-		Path:  opts.BootFiles.BlockCIMFiles.EFIVHDPath,
-		Type_: "VirtualDisk",
+		Path:     opts.BootFiles.BlockCIMFiles.EFIVHDPath,
+		Type_:    "VirtualDisk",
+		ReadOnly: !opts.WritableEFI,
 	}
+
 	doc.VirtualMachine.Devices.Scsi[guestrequest.ScsiControllerGuids[0]].Attachments["2"] = hcsschema.Attachment{
 		Path:     opts.BootFiles.BlockCIMFiles.BootCIMVHDPath,
 		Type_:    "VirtualDisk",
@@ -397,16 +466,11 @@ func prepareConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWCOW) (*
 
 	vsmbOpts := uvm.DefaultVSMBOptions(true)
 	vsmbOpts.TakeBackupPrivilege = true
-	doc.VirtualMachine.Devices.VirtualSmb = &hcsschema.VirtualSmb{
-		DirectFileMappingInMB: 1024, // Sensible default, but could be a tuning parameter somewhere
-		Shares: []hcsschema.VirtualSmbShare{
-			{
-				Name:    "os",
-				Path:    opts.BootFiles.VmbFSFiles.OSFilesPath,
-				Options: vsmbOpts,
-			},
-		},
-	}
+	doc.VirtualMachine.Devices.VirtualSmb.Shares = []hcsschema.VirtualSmbShare{{
+		Name:    "os",
+		Path:    opts.BootFiles.VmbFSFiles.OSFilesPath,
+		Options: vsmbOpts,
+	}}
 
 	doc.VirtualMachine.Chipset = &hcsschema.Chipset{
 		Uefi: &hcsschema.Uefi{
@@ -463,7 +527,8 @@ func CreateWCOW(ctx context.Context, opts *OptionsWCOW) (_ *UtilityVM, err error
 		devicesPhysicallyBacked: opts.FullyPhysicallyBacked,
 		vsmbNoDirectMap:         opts.NoDirectMap,
 		noWritableFileShares:    opts.NoWritableFileShares,
-		createOpts:              *opts,
+		createOpts:              opts,
+		blockCIMMounts:          make(map[string]*UVMMountedBlockCIMs),
 	}
 
 	defer func() {
@@ -479,10 +544,20 @@ func CreateWCOW(ctx context.Context, opts *OptionsWCOW) (_ *UtilityVM, err error
 	var doc *hcsschema.ComputeSystem
 	if opts.SecurityPolicyEnabled {
 		doc, err = prepareSecurityConfigDoc(ctx, uvm, opts)
-		log.G(ctx).Tracef("CreateWCOW prepareSecurityConfigDoc result doc: %v err %v", doc, err)
+		if logrus.IsLevelEnabled(logrus.TraceLevel) {
+			log.G(ctx).WithFields(logrus.Fields{
+				"doc":           log.Format(ctx, doc),
+				logrus.ErrorKey: err,
+			}).Trace("CreateWCOW prepareSecurityConfigDoc")
+		}
 	} else {
 		doc, err = prepareConfigDoc(ctx, uvm, opts)
-		log.G(ctx).Tracef("CreateWCOW prepareConfigDoc result doc: %v err %v", doc, err)
+		if logrus.IsLevelEnabled(logrus.TraceLevel) {
+			log.G(ctx).WithFields(logrus.Fields{
+				"doc":           log.Format(ctx, doc),
+				logrus.ErrorKey: err,
+			}).Trace("CreateWCOW prepareConfigDoc")
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("error in preparing config doc: %w", err)

@@ -46,8 +46,11 @@ const (
 )
 
 type Container struct {
-	id    string
-	vsock transport.Transport
+	id string
+
+	vsock   transport.Transport
+	logPath string   // path to [logFile].
+	logFile *os.File // file to redirect container's stdio to.
 
 	spec          *oci.Spec
 	ociBundlePath string
@@ -76,12 +79,42 @@ type Container struct {
 	scratchDirPath string
 }
 
-func (c *Container) Start(ctx context.Context, conSettings stdio.ConnectionSettings) (int, error) {
-	log.G(ctx).WithField(logfields.ContainerID, c.id).Info("opengcs::Container::Start")
-	stdioSet, err := stdio.Connect(c.vsock, conSettings)
+func (c *Container) Start(ctx context.Context, conSettings stdio.ConnectionSettings) (_ int, err error) {
+	entity := log.G(ctx).WithField(logfields.ContainerID, c.id)
+	entity.Info("opengcs::Container::Start")
+
+	// only use the logfile for the init process, since we don't want to tee stdio of execs
+	t := c.vsock
+	if c.logPath != "" {
+		// don't use [os.Create] since that truncates an existing file, which is not desired
+		if c.logFile, err = os.OpenFile(c.logPath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666); err != nil {
+			return -1, fmt.Errorf("failed to open log file: %s: %w", c.logPath, err)
+		}
+		go func() {
+			// initProcess is already created in [(*Host).CreateContainer], and is, therefore, "waitable"
+			// wait in `writersWg`, which is closed after process is cleaned up (including io Relays)
+			//
+			// Note: [PipeRelay] and [TtyRelay] are not safe to call multiple times, so it is safer to wait
+			// on the parent (init) process.
+			c.initProcess.writersWg.Wait()
+
+			if lfErr := c.logFile.Close(); lfErr != nil {
+				entity.WithFields(logrus.Fields{
+					logrus.ErrorKey: lfErr,
+					logfields.Path:  c.logFile.Name(),
+				}).Warn("failed to close log file")
+			}
+			c.logFile = nil
+		}()
+
+		t = transport.NewMultiWriter(c.vsock, c.logFile)
+	}
+
+	stdioSet, err := stdio.Connect(t, conSettings)
 	if err != nil {
 		return -1, err
 	}
+
 	if c.initProcess.spec.Terminal {
 		ttyr := c.container.Tty()
 		ttyr.ReplaceConnectionSet(stdioSet)
@@ -201,14 +234,17 @@ func (c *Container) Delete(ctx context.Context) error {
 		}
 
 		// remove user mounts in sandbox container - use virtual pod aware paths
-		mountsDir := specGuest.VirtualPodAwareSandboxMountsDir(c.id, virtualSandboxID)
-		if err := storage.UnmountAllInPath(ctx, mountsDir, true); err != nil {
+		if err := storage.UnmountAllInPath(ctx, specGuest.VirtualPodAwareSandboxMountsDir(c.id, virtualSandboxID), true); err != nil {
 			entity.WithError(err).Error("failed to unmount sandbox mounts")
 		}
 
+		// remove user mounts in tmpfs sandbox container - use virtual pod aware paths
+		if err := storage.UnmountAllInPath(ctx, specGuest.VirtualPodAwareSandboxTmpfsMountsDir(c.id, virtualSandboxID), true); err != nil {
+			entity.WithError(err).Error("failed to unmount tmpfs sandbox mounts")
+		}
+
 		// remove hugepages mounts in sandbox container - use virtual pod aware paths
-		hugePagesDir := specGuest.VirtualPodAwareHugePagesMountsDir(c.id, virtualSandboxID)
-		if err := storage.UnmountAllInPath(ctx, hugePagesDir, true); err != nil {
+		if err := storage.UnmountAllInPath(ctx, specGuest.VirtualPodAwareHugePagesMountsDir(c.id, virtualSandboxID), true); err != nil {
 			entity.WithError(err).Error("failed to unmount hugepages mounts")
 		}
 	}

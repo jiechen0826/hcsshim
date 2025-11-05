@@ -80,7 +80,7 @@ func SandboxRootDir(sandboxID string) string {
 }
 
 // VirtualPodRootDir returns the virtual pod root directory inside UVM/host.
-// This is used when multiple pods share a UVM via virtualSandboxID
+// This is used when multiple pods share a UVM via virtualSandboxID.
 func VirtualPodRootDir(virtualSandboxID string) string {
 	// Ensure virtualSandboxID is a relative path to prevent directory traversal
 	sanitizedID := filepath.Clean(virtualSandboxID)
@@ -91,7 +91,7 @@ func VirtualPodRootDir(virtualSandboxID string) string {
 }
 
 // VirtualPodAwareSandboxRootDir returns the appropriate root directory based on whether
-// the sandbox is part of a virtual pod or traditional single-pod setup
+// the sandbox is part of a virtual pod or traditional single-pod setup.
 func VirtualPodAwareSandboxRootDir(sandboxID, virtualSandboxID string) string {
 	if virtualSandboxID != "" {
 		return VirtualPodRootDir(virtualSandboxID)
@@ -109,7 +109,7 @@ func VirtualPodMountsDir(virtualSandboxID string) string {
 	return filepath.Join(VirtualPodRootDir(virtualSandboxID), "sandboxMounts")
 }
 
-// VirtualPodAwareSandboxMountsDir returns the appropriate mounts directory
+// VirtualPodAwareSandboxMountsDir returns the appropriate mounts directory.
 func VirtualPodAwareSandboxMountsDir(sandboxID, virtualSandboxID string) string {
 	if virtualSandboxID != "" {
 		return VirtualPodMountsDir(virtualSandboxID)
@@ -117,17 +117,35 @@ func VirtualPodAwareSandboxMountsDir(sandboxID, virtualSandboxID string) string 
 	return SandboxMountsDir(sandboxID)
 }
 
+// SandboxTmpfsMountsDir returns sandbox tmpfs mounts directory inside UVM.
+func SandboxTmpfsMountsDir(sandboxID string) string {
+	return filepath.Join(SandboxRootDir(sandboxID), "sandboxTmpfsMounts")
+}
+
+// VirtualPodTmpfsMountsDir returns virtual pod tmpfs mounts directory inside UVM/host.
+func VirtualPodTmpfsMountsDir(virtualSandboxID string) string {
+	return filepath.Join(VirtualPodRootDir(virtualSandboxID), "sandboxTmpfsMounts")
+}
+
+// VirtualPodAwareSandboxTmpfsMountsDir returns the appropriate tmpfs mounts directory.
+func VirtualPodAwareSandboxTmpfsMountsDir(sandboxID, virtualSandboxID string) string {
+	if virtualSandboxID != "" {
+		return VirtualPodTmpfsMountsDir(virtualSandboxID)
+	}
+	return SandboxTmpfsMountsDir(sandboxID)
+}
+
 // HugePagesMountsDir returns hugepages mounts directory inside UVM.
 func HugePagesMountsDir(sandboxID string) string {
 	return filepath.Join(SandboxRootDir(sandboxID), "hugepages")
 }
 
-// VirtualPodHugePagesMountsDir returns virtual pod hugepages mounts directory
+// VirtualPodHugePagesMountsDir returns virtual pod hugepages mounts directory.
 func VirtualPodHugePagesMountsDir(virtualSandboxID string) string {
 	return filepath.Join(VirtualPodRootDir(virtualSandboxID), "hugepages")
 }
 
-// VirtualPodAwareHugePagesMountsDir returns the appropriate hugepages directory
+// VirtualPodAwareHugePagesMountsDir returns the appropriate hugepages directory.
 func VirtualPodAwareHugePagesMountsDir(sandboxID, virtualSandboxID string) string {
 	if virtualSandboxID != "" {
 		return VirtualPodHugePagesMountsDir(virtualSandboxID)
@@ -135,14 +153,14 @@ func VirtualPodAwareHugePagesMountsDir(sandboxID, virtualSandboxID string) strin
 	return HugePagesMountsDir(sandboxID)
 }
 
-// SandboxMountSource returns sandbox mount path inside UVM
+// SandboxMountSource returns sandbox mount path inside UVM.
 func SandboxMountSource(sandboxID, path string) string {
 	mountsDir := SandboxMountsDir(sandboxID)
 	subPath := strings.TrimPrefix(path, guestpath.SandboxMountPrefix)
 	return filepath.Join(mountsDir, subPath)
 }
 
-// VirtualPodAwareSandboxMountSource returns mount source path for virtual pod aware containers
+// VirtualPodAwareSandboxMountSource returns mount source path for virtual pod aware containers.
 func VirtualPodAwareSandboxMountSource(sandboxID, virtualSandboxID, path string) string {
 	if virtualSandboxID != "" {
 		mountsDir := VirtualPodMountsDir(virtualSandboxID)
@@ -152,14 +170,31 @@ func VirtualPodAwareSandboxMountSource(sandboxID, virtualSandboxID, path string)
 	return SandboxMountSource(sandboxID, path)
 }
 
-// HugePagesMountSource returns hugepages mount path inside UVM
+// SandboxTmpfsMountSource returns sandbox tmpfs mount path inside UVM.
+func SandboxTmpfsMountSource(sandboxID, path string) string {
+	tmpfsMountDir := SandboxTmpfsMountsDir(sandboxID)
+	subPath := strings.TrimPrefix(path, guestpath.SandboxTmpfsMountPrefix)
+	return filepath.Join(tmpfsMountDir, subPath)
+}
+
+// VirtualPodAwareSandboxTmpfsMountSource returns tmpfs mount source path for virtual pod aware containers.
+func VirtualPodAwareSandboxTmpfsMountSource(sandboxID, virtualSandboxID, path string) string {
+	if virtualSandboxID != "" {
+		mountsDir := VirtualPodTmpfsMountsDir(virtualSandboxID)
+		subPath := strings.TrimPrefix(path, guestpath.SandboxTmpfsMountPrefix)
+		return filepath.Join(mountsDir, subPath)
+	}
+	return SandboxTmpfsMountSource(sandboxID, path)
+}
+
+// HugePagesMountSource returns hugepages mount path inside UVM.
 func HugePagesMountSource(sandboxID, path string) string {
 	mountsDir := HugePagesMountsDir(sandboxID)
 	subPath := strings.TrimPrefix(path, guestpath.HugePagesMountPrefix)
 	return filepath.Join(mountsDir, subPath)
 }
 
-// VirtualPodAwareHugePagesMountSource returns hugepages mount source for virtual pod aware containers
+// VirtualPodAwareHugePagesMountSource returns hugepages mount source for virtual pod aware containers.
 func VirtualPodAwareHugePagesMountSource(sandboxID, virtualSandboxID, path string) string {
 	if virtualSandboxID != "" {
 		mountsDir := VirtualPodHugePagesMountsDir(virtualSandboxID)
@@ -167,6 +202,20 @@ func VirtualPodAwareHugePagesMountSource(sandboxID, virtualSandboxID, path strin
 		return filepath.Join(mountsDir, subPath)
 	}
 	return HugePagesMountSource(sandboxID, path)
+}
+
+// SandboxLogsDir returns the logs directory inside the UVM for forwarding container stdio to.
+//
+// Virtual pod aware.
+func SandboxLogsDir(sandboxID, virtualSandboxID string) string {
+	return filepath.Join(VirtualPodAwareSandboxRootDir(sandboxID, virtualSandboxID), "logs")
+}
+
+// SandboxLogPath returns the log path inside the UVM.
+//
+// Virtual pod aware.
+func SandboxLogPath(sandboxID, virtualSandboxID, path string) string {
+	return filepath.Join(SandboxLogsDir(sandboxID, virtualSandboxID), path)
 }
 
 // GetNetworkNamespaceID returns the `ToLower` of
@@ -231,82 +280,99 @@ func SetCoreRLimit(spec *oci.Spec, value string) error {
 	return nil
 }
 
+type ParseUserStrResult struct {
+	UID       uint32
+	GID       uint32
+	Username  string
+	Groupname string
+}
+
 // ParseUserStr parses `userStr`, looks up container filesystem's /etc/passwd and /etc/group
 // files for UID and GID for the process.
 //
 // NB: When `userStr` represents a UID, which doesn't exist, return UID as is with GID set to 0.
-func ParseUserStr(rootPath, userStr string) (uint32, uint32, error) {
+func ParseUserStr(rootPath, userStr string) (res ParseUserStrResult, err error) {
 	parts := strings.Split(userStr, ":")
-	switch len(parts) {
-	case 1:
-		v, err := strconv.Atoi(parts[0])
-		if err != nil {
-			// this is a username string, evaluate uid/gid
-			u, err := getUser(rootPath, func(u user.User) bool {
-				return u.Name == userStr
-			})
-			if err != nil {
-				return 0, 0, errors.Wrapf(err, "failed to find user by username: %s", userStr)
-			}
-			return uint32(u.Uid), uint32(u.Gid), nil
-		}
+	if len(parts) > 2 {
+		return res, fmt.Errorf("invalid userstr: '%s'", userStr)
+	}
 
-		// this is a UID, parse /etc/passwd to find GID.
-		u, err := getUser(rootPath, func(u user.User) bool {
+	var v int
+	var u user.User
+	var g user.Group
+
+	// Handle the "user part" first.
+	v, err = strconv.Atoi(parts[0])
+	if err != nil {
+		// this is a username string, evaluate uid/gid
+		u, err = GetUser(rootPath, func(u user.User) bool {
+			return u.Name == parts[0]
+		})
+		if err != nil {
+			return res, errors.Wrapf(err, "failed to find user by username: %s", parts[0])
+		}
+		res.UID = uint32(u.Uid)
+		res.GID = uint32(u.Gid)
+		res.Username = u.Name
+		// Will determine group name below
+	} else {
+		// this is a UID, parse /etc/passwd to find name and GID.
+		u, err = GetUser(rootPath, func(u user.User) bool {
 			return u.Uid == v
 		})
 		if err != nil {
-			// UID doesn't exist, return as is with GID 0.
 			if OutOfUint32Bounds(v) {
-				return 0, 0, errors.Errorf("UID (%d) exceeds uint32 bounds", v)
+				return res, errors.Errorf("UID (%d) exceeds uint32 bounds", v)
 			}
-			return uint32(v), 0, nil
-		}
-		return uint32(u.Uid), uint32(u.Gid), nil
-	case 2:
-		var (
-			userName, groupName string
-			uid, gid            uint32
-		)
-		v, err := strconv.Atoi(parts[0])
-		if err != nil {
-			// username string, lookup UID
-			userName = parts[0]
-			u, err := getUser(rootPath, func(u user.User) bool {
-				return u.Name == userName
-			})
-			if err != nil {
-				return 0, 0, errors.Wrapf(err, "failed to find user by username: %s", userName)
-			}
-			uid = uint32(u.Uid)
+			// UID doesn't exist, continue with GID default to 0 (but we still want to
+			// look up its name) unless overridden.
+			res.UID = uint32(v)
 		} else {
-			if OutOfUint32Bounds(v) {
-				return 0, 0, errors.Errorf("UID (%d) exceeds uint32 bounds", v)
-			}
-			uid = uint32(v)
+			res.UID = uint32(u.Uid)
+			res.GID = uint32(u.Gid)
+			res.Username = u.Name
 		}
-
-		v, err = strconv.Atoi(parts[1])
-		if err != nil {
-			// groupname string, lookup GID
-			groupName = parts[1]
-			g, err := getGroup(rootPath, func(g user.Group) bool {
-				return g.Name == groupName
-			})
-			if err != nil {
-				return 0, 0, errors.Wrapf(err, "failed to find group by groupname: %s", groupName)
-			}
-			gid = uint32(g.Gid)
-		} else {
-			if OutOfUint32Bounds(v) {
-				return 0, 0, errors.Errorf("GID (%d) exceeds uint32 bounds", v)
-			}
-			gid = uint32(v)
-		}
-		return uid, gid, nil
-	default:
-		return 0, 0, fmt.Errorf("invalid userstr: '%s'", userStr)
 	}
+
+	if len(parts) == 1 {
+		g, err = GetGroup(rootPath, func(g user.Group) bool {
+			return g.Gid == int(res.GID)
+		})
+		// If GID doesn't exist we just don't fill in groupName
+		if err == nil {
+			res.Groupname = g.Name
+		}
+		return res, nil
+	}
+
+	v, err = strconv.Atoi(parts[1])
+	if err != nil {
+		// this is a group name string, evaluate gid
+		g, err = GetGroup(rootPath, func(g user.Group) bool {
+			return g.Name == parts[1]
+		})
+		if err != nil {
+			return res, errors.Wrapf(err, "failed to find group by groupname: %s", parts[1])
+		}
+		res.GID = uint32(g.Gid)
+		res.Groupname = g.Name
+	} else {
+		// this is a GID, parse /etc/group to find name.
+		g, err = GetGroup(rootPath, func(g user.Group) bool {
+			return g.Gid == v
+		})
+		if err != nil {
+			if OutOfUint32Bounds(v) {
+				return res, errors.Errorf("GID (%d) exceeds uint32 bounds", v)
+			}
+			// GID doesn't exist, continue with GID as is.
+			res.GID = uint32(v)
+		} else {
+			res.GID = uint32(g.Gid)
+			res.Groupname = g.Name
+		}
+	}
+	return res, nil
 }
 
 // SetUserStr sets `spec.Process` to the valid `userstr` based on the OCI Image Spec
@@ -330,17 +396,17 @@ func ParseUserStr(rootPath, userStr string) (uint32, uint32, error) {
 func SetUserStr(spec *oci.Spec, userstr string) error {
 	setProcess(spec)
 
-	uid, gid, err := ParseUserStr(spec.Root.Path, userstr)
+	usrInfo, err := ParseUserStr(spec.Root.Path, userstr)
 	if err != nil {
 		return err
 	}
 
-	spec.Process.User.UID, spec.Process.User.GID = uid, gid
+	spec.Process.User.UID, spec.Process.User.GID = usrInfo.UID, usrInfo.GID
 	return nil
 }
 
-// getUser looks up /etc/passwd file in a container filesystem and returns parsed user
-func getUser(rootPath string, filter func(user.User) bool) (user.User, error) {
+// GetUser looks up /etc/passwd file in a container filesystem and returns parsed user
+func GetUser(rootPath string, filter func(user.User) bool) (user.User, error) {
 	users, err := user.ParsePasswdFileFilter(filepath.Join(rootPath, "/etc/passwd"), filter)
 	if err != nil {
 		return user.User{}, err
@@ -359,8 +425,8 @@ func getUser(rootPath string, filter func(user.User) bool) (user.User, error) {
 	return users[0], nil
 }
 
-// getGroup looks up /etc/group file in a container filesystem and returns parsed group
-func getGroup(rootPath string, filter func(user.Group) bool) (user.Group, error) {
+// GetGroup looks up /etc/group file in a container filesystem and returns parsed group
+func GetGroup(rootPath string, filter func(user.Group) bool) (user.Group, error) {
 	groups, err := user.ParseGroupFileFilter(filepath.Join(rootPath, "/etc/group"), filter)
 	if err != nil {
 		return user.Group{}, err

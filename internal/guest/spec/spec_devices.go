@@ -10,11 +10,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Microsoft/hcsshim/internal/guest/storage/pci"
-	"github.com/Microsoft/hcsshim/internal/log"
+	"github.com/opencontainers/cgroups/devices/config"
 	"github.com/opencontainers/runc/libcontainer/devices"
 	oci "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
+
+	"github.com/Microsoft/hcsshim/internal/guest/storage/pci"
+	"github.com/Microsoft/hcsshim/internal/log"
 )
 
 const (
@@ -23,6 +26,8 @@ const (
 	charType  = "char"
 	blockType = "block"
 
+	// TODO: consolidate with `internal\uvm\virtual_device.go` and use in both locations
+	gpuDeviceIDType        = "gpu"
 	vpciDeviceIDTypeLegacy = "vpci"
 	vpciDeviceIDType       = "vpci-instance-id"
 )
@@ -30,6 +35,8 @@ const (
 // AddAssignedDevice goes through the assigned devices that have been enumerated
 // on the spec and updates the spec so that the correct device nodes can be mounted
 // into the resulting container by the runtime.
+//
+// GPU devices are skipped, since they are handled in [addNvidiaDeviceHook].
 func AddAssignedDevice(ctx context.Context, spec *oci.Spec) error {
 	// Add an explicit timeout before we try to find the dev nodes so we
 	// aren't waiting forever.
@@ -52,6 +59,12 @@ func AddAssignedDevice(ctx context.Context, spec *oci.Spec) error {
 			for _, dev := range devs {
 				AddLinuxDeviceToSpec(ctx, dev, spec, true)
 			}
+		case gpuDeviceIDType:
+		default:
+			log.G(ctx).WithFields(logrus.Fields{
+				"type": d.IDType,
+				"id":   d.ID,
+			}).Warn("unknown device type")
 		}
 	}
 
@@ -60,7 +73,7 @@ func AddAssignedDevice(ctx context.Context, spec *oci.Spec) error {
 
 // devicePathsFromPCIPath takes a sysfs bus path to the pci device assigned into the guest
 // and attempts to find the dev nodes in the guest that map to it.
-func devicePathsFromPCIPath(ctx context.Context, pciPath string) ([]*devices.Device, error) {
+func devicePathsFromPCIPath(ctx context.Context, pciPath string) ([]*config.Device, error) {
 	// get the full pci path to make sure that it's the final path
 	pciFullPath, err := filepath.EvalSymlinks(pciPath)
 	if err != nil {
@@ -75,7 +88,7 @@ func devicePathsFromPCIPath(ctx context.Context, pciPath string) ([]*devices.Dev
 		}
 
 		// some drivers create multiple dev nodes associated with the PCI device
-		out := []*devices.Device{}
+		out := []*config.Device{}
 
 		// get all host dev devices
 		hostDevices, err := devices.HostDevices()
@@ -92,9 +105,9 @@ func devicePathsFromPCIPath(ctx context.Context, pciPath string) ([]*devices.Dev
 
 			deviceTypeString := ""
 			switch d.Type {
-			case devices.BlockDevice:
+			case config.BlockDevice:
 				deviceTypeString = blockType
-			case devices.CharDevice:
+			case config.CharDevice:
 				deviceTypeString = charType
 			default:
 				return nil, errors.New("unsupported device type")
@@ -127,7 +140,7 @@ func devicePathsFromPCIPath(ctx context.Context, pciPath string) ([]*devices.Dev
 	}
 }
 
-func AddLinuxDeviceToSpec(ctx context.Context, hostDevice *devices.Device, spec *oci.Spec, addCgroupDevice bool) {
+func AddLinuxDeviceToSpec(ctx context.Context, hostDevice *config.Device, spec *oci.Spec, addCgroupDevice bool) {
 	rd := oci.LinuxDevice{
 		Path:  hostDevice.Path,
 		Type:  string(hostDevice.Type),
