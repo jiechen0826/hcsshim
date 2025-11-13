@@ -11,6 +11,7 @@ import (
 
 	oci "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"go.opencensus.io/trace"
 
 	"github.com/Microsoft/hcsshim/internal/guest/network"
@@ -83,8 +84,8 @@ func setupSandboxContainerSpec(ctx context.Context, id string, spec *oci.Spec) (
 			return err
 		}
 	}
+
 	// Write resolv.conf
-	log.G(ctx).Debug("sandbox resolv.conf, cflick")
 	ns, err := getNetworkNamespace(specGuest.GetNetworkNamespaceID(spec))
 	if err != nil {
 		if !strings.EqualFold(spec.Annotations[annotations.SkipPodNetworking], "true") {
@@ -139,6 +140,20 @@ func setupSandboxContainerSpec(ctx context.Context, id string, spec *oci.Spec) (
 	} else {
 		// Traditional sandbox goes under /containers
 		spec.Linux.CgroupsPath = "/containers/" + id
+	}
+
+	// Apply annotations to spec (this processes LCOWPrivileged annotation if set by host)
+	if err := specGuest.ApplyAnnotationsToSpec(ctx, spec); err != nil {
+		return errors.Wrap(err, "failed to apply annotations to sandbox container spec")
+	}
+
+	// Log when LCOWPrivileged annotation is detected
+	if strings.EqualFold(spec.Annotations[annotations.LCOWPrivileged], "true") {
+		log.G(ctx).WithFields(logrus.Fields{
+			"containerID":      id,
+			"virtualSandboxID": virtualSandboxID,
+			"cgroupPath":       spec.Linux.CgroupsPath,
+		}).Info("Sandbox container detected with LCOWPrivileged=true annotation")
 	}
 
 	// Clear the windows section as we dont want to forward to runc
