@@ -5,25 +5,22 @@ package bridge
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
-	"github.com/Microsoft/cosesign1go/pkg/cosesign1"
-	didx509resolver "github.com/Microsoft/didx509go/pkg/did-x509-resolver"
 	"github.com/Microsoft/hcsshim/internal/bridgeutils/gcserr"
 	hcsschema "github.com/Microsoft/hcsshim/internal/hcs/schema2"
 	"github.com/Microsoft/hcsshim/internal/log"
 	"github.com/Microsoft/hcsshim/internal/logfields"
+	oci "github.com/Microsoft/hcsshim/internal/oci"
 	"github.com/Microsoft/hcsshim/internal/protocol/guestresource"
 	"github.com/Microsoft/hcsshim/internal/pspdriver"
+	"github.com/Microsoft/hcsshim/pkg/annotations"
 	"github.com/Microsoft/hcsshim/pkg/securitypolicy"
-	oci "github.com/opencontainers/runtime-spec/specs-go"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -40,10 +37,12 @@ type Host struct {
 }
 
 type Container struct {
-	id             string
-	spec           oci.Spec
-	processesMutex sync.Mutex
-	processes      map[uint32]*containerProcess
+	id              string
+	spec            specs.Spec
+	processesMutex  sync.Mutex
+	processes       map[uint32]*containerProcess
+	commandLine     bool
+	commandLineExec bool
 }
 
 // Process is a struct that defines the lifetime and operations associated with
@@ -63,6 +62,53 @@ func NewHost(initialEnforcer securitypolicy.SecurityPolicyEnforcer) *Host {
 	}
 }
 
+// Write security policy, signed UVM reference and host AMD certificate to
+// container's rootfs, so that application and sidecar containers can have
+// access to it. The security policy is required by containers which need to
+// extract init-time claims found in the security policy. The directory path
+// containing the files is exposed via UVM_SECURITY_CONTEXT_DIR env var.
+// It may be an error to have a security policy but not expose it to the
+// container as in that case it can never be checked as correct by a verifier.
+func (h *Host) SetupSecurityContextDir(ctx context.Context, spec *specs.Spec) error {
+	if oci.ParseAnnotationsBool(ctx, spec.Annotations, annotations.WCOWSecurityPolicyEnv, true) {
+		encodedPolicy := h.securityPolicyEnforcer.EncodedSecurityPolicy()
+		hostAMDCert := spec.Annotations[annotations.WCOWHostAMDCertificate]
+		if len(encodedPolicy) > 0 || len(hostAMDCert) > 0 || len(h.uvmReferenceInfo) > 0 {
+			// Use os.MkdirTemp to make sure that the directory is unique.
+			securityContextDir, err := os.MkdirTemp(spec.Root.Path, securitypolicy.SecurityContextDirTemplate)
+			if err != nil {
+				return fmt.Errorf("failed to create security context directory: %w", err)
+			}
+			// Make sure that files inside directory are readable
+			if err := os.Chmod(securityContextDir, 0755); err != nil {
+				return fmt.Errorf("failed to chmod security context directory: %w", err)
+			}
+
+			if len(encodedPolicy) > 0 {
+				if err := writeFileInDir(securityContextDir, securitypolicy.PolicyFilename, []byte(encodedPolicy), 0777); err != nil {
+					return fmt.Errorf("failed to write security policy: %w", err)
+				}
+			}
+			if len(h.uvmReferenceInfo) > 0 {
+				if err := writeFileInDir(securityContextDir, securitypolicy.ReferenceInfoFilename, []byte(h.uvmReferenceInfo), 0777); err != nil {
+					return fmt.Errorf("failed to write UVM reference info: %w", err)
+				}
+			}
+
+			if len(hostAMDCert) > 0 {
+				if err := writeFileInDir(securityContextDir, securitypolicy.HostAMDCertFilename, []byte(hostAMDCert), 0777); err != nil {
+					return fmt.Errorf("failed to write host AMD certificate: %w", err)
+				}
+			}
+
+			containerCtxDir := fmt.Sprintf("/%s", filepath.Base(securityContextDir))
+			secCtxEnv := fmt.Sprintf("UVM_SECURITY_CONTEXT_DIR=%s", containerCtxDir)
+			spec.Process.Env = append(spec.Process.Env, secCtxEnv)
+		}
+	}
+	return nil
+}
+
 // InjectFragment extends current security policy with additional constraints
 // from the incoming fragment. Note that it is base64 encoded over the bridge/
 //
@@ -75,61 +121,15 @@ func NewHost(initialEnforcer securitypolicy.SecurityPolicyEnforcer) *Host {
 // security policy (done in the regoby LoadFragment)
 func (h *Host) InjectFragment(ctx context.Context, fragment *guestresource.LCOWSecurityPolicyFragment) (err error) {
 	log.G(ctx).WithField("fragment", fmt.Sprintf("%+v", fragment)).Debug("GCS Host.InjectFragment")
-
-	raw, err := base64.StdEncoding.DecodeString(fragment.Fragment)
+	issuer, feed, payloadString, err := securitypolicy.ExtractAndVerifyFragment(ctx, fragment)
 	if err != nil {
 		return err
 	}
-	blob := []byte(fragment.Fragment)
-	// keep a copy of the fragment, so we can manually figure out what went wrong
-	// will be removed eventually. Give it a unique name to avoid any potential
-	// race conditions.
-	sha := sha256.New()
-	sha.Write(blob)
-	timestamp := time.Now()
-	fragmentPath := fmt.Sprintf("fragment-%x-%d.blob", sha.Sum(nil), timestamp.UnixMilli())
-	_ = os.WriteFile(filepath.Join(os.TempDir(), fragmentPath), blob, 0644)
-
-	unpacked, err := cosesign1.UnpackAndValidateCOSE1CertChain(raw)
-	if err != nil {
-		return fmt.Errorf("InjectFragment failed COSE validation: %w", err)
-	}
-
-	payloadString := string(unpacked.Payload[:])
-	issuer := unpacked.Issuer
-	feed := unpacked.Feed
-	chainPem := unpacked.ChainPem
-
-	log.G(ctx).WithFields(logrus.Fields{
-		"issuer":   issuer, // eg the DID:x509:blah....
-		"feed":     feed,
-		"cty":      unpacked.ContentType,
-		"chainPem": chainPem,
-	}).Debugf("unpacked COSE1 cert chain")
-
-	log.G(ctx).WithFields(logrus.Fields{
-		"payload": payloadString,
-	}).Tracef("unpacked COSE1 payload")
-
-	if len(issuer) == 0 || len(feed) == 0 { // must both be present
-		return fmt.Errorf("either issuer and feed must both be provided in the COSE_Sign1 protected header")
-	}
-
-	// Resolve returns a did doc that we don't need
-	// we only care if there was an error or not
-	_, err = didx509resolver.Resolve(unpacked.ChainPem, issuer, true)
-	if err != nil {
-		log.G(ctx).Printf("Badly formed fragment - did resolver failed to match fragment did:x509 from chain with purported issuer %s, feed %s - err %s", issuer, feed, err.Error())
-		return err
-	}
-
 	// now offer the payload fragment to the policy
 	err = h.securityPolicyEnforcer.LoadFragment(ctx, issuer, feed, payloadString)
 	if err != nil {
-		return fmt.Errorf("InjectFragment failed policy load: %w", err)
+		return fmt.Errorf("error loading security policy fragment: %w", err)
 	}
-	log.G(ctx).Printf("passed fragment into the enforcer.")
-
 	return nil
 }
 
