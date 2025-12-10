@@ -1,0 +1,12 @@
+schemaVersion: 1.0.0
+providers:
+- provider: InventoryAsCode
+  version: 1.0.0
+  metadata:
+    isProduction: true
+    accountableOwners:
+      service: a0712bf2-7564-4e58-a9d2-8a8053e650ba
+    routing:
+      defaultAreaPath:
+        org: microsoft
+        path: OS\Core\Base\VMAC - Virtual Machines and Containers\CPlat-Container Platform\Docker
