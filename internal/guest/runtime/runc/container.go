@@ -59,7 +59,12 @@ func (c *container) Start() error {
 	if err != nil {
 		runcErr := getRuncLogError(logPath)
 		c.r.cleanupContainer(c.id) //nolint:errcheck
-		return errors.Wrapf(runcErr, "runc start failed with %v: %s", err, string(out))
+		if runcErr != nil {
+			return errors.Wrapf(runcErr, "runc start failed with %v: %s", err, string(out))
+		} else {
+			logrus.Warn("runc start failed without writing error to log file")
+			return errors.Wrapf(err, "runc start failed: %s", string(out))
+		}
 	}
 	return nil
 }
@@ -76,14 +81,40 @@ func (c *container) ExecProcess(process *oci.Process, stdioSet *stdio.Connection
 
 // Kill sends the specified signal to the container's init process.
 func (c *container) Kill(signal syscall.Signal) error {
-	logrus.WithField(logfields.ContainerID, c.id).Debug("runc::container::Kill")
+	logrus.WithFields(logrus.Fields{
+		logfields.ContainerID: c.id,
+		"signal":              signal.String(),
+	}).Debug("runc::container::Kill")
+	return c.kill(signal, false)
+}
+
+// killAll terminates all processes started in the container.
+//
+// Note: [runc deprecated] the `kill --all` flag starting in v1.2, but, prior to that, it was required
+// to kill all processes within the container after the init exits.
+// Until we can guarantee that the runc version is greater than 1.1 and runc explicitly removes the option,
+// keep using it here.
+// This mirrors how upstream containerd's runc handles [init exit] via [kill all].
+//
+// [runc deprecated]: https://github.com/opencontainers/runc/pull/3825
+// [init exit]: https://github.com/containerd/containerd/blob/48baa31a0ad1ca1121ddaf968d3b8aa68c40bf84/cmd/containerd-shim-runc-v2/task/service.go#L725
+// [kill all]: https://github.com/containerd/containerd/blob/48baa31a0ad1ca1121ddaf968d3b8aa68c40bf84/cmd/containerd-shim-runc-v2/process/init.go#L375
+func (c *container) killAll() error {
+	logrus.WithField(logfields.ContainerID, c.id).Debug("runc::container::killAll")
+	return c.kill(syscall.SIGKILL, true)
+}
+
+func (c *container) kill(signal syscall.Signal, all bool) error {
 	args := []string{"kill"}
+	if all {
+		args = append(args, "--all")
+	}
 	args = append(args, c.id, strconv.Itoa(int(signal)))
 	cmd := runcCommand(args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		runcErr := parseRuncError(string(out))
-		return errors.Wrapf(runcErr, "unknown runc error after kill %v: %s", err, string(out))
+		return errors.Wrapf(runcErr, "runc kill failed with %v: %s", err, string(out))
 	}
 	return nil
 }
@@ -119,8 +150,12 @@ func (c *container) Resume() error {
 	cmd := runcCommandLog(logPath, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		runcErr := getRuncLogError(logPath)
-		return errors.Wrapf(runcErr, "runc resume failed with %v: %s", err, string(out))
+		if runcErr := getRuncLogError(logPath); runcErr != nil {
+			return errors.Wrapf(runcErr, "runc resume failed with %v: %s", err, string(out))
+		} else {
+			logrus.Warn("runc resume failed without writing error to log file")
+			return errors.Wrapf(err, "runc resume failed: %s", string(out))
+		}
 	}
 	return nil
 }
@@ -335,7 +370,7 @@ func (c *container) startProcess(
 	tempProcessDir string,
 	hasTerminal bool,
 	stdioSet *stdio.ConnectionSet, initialArgs ...string,
-) (p *process, err error) {
+) (_ *process, err error) {
 	args := initialArgs
 
 	if err := setSubreaper(1); err != nil {
@@ -387,8 +422,13 @@ func (c *container) startProcess(
 	}
 
 	if err := cmd.Run(); err != nil {
-		runcErr := getRuncLogError(logPath)
-		return nil, errors.Wrapf(runcErr, "failed to run runc create/exec call for container %s with %v", c.id, err)
+		if runcErr := getRuncLogError(logPath); runcErr != nil {
+			return nil, errors.Wrapf(runcErr, "runc create/exec call for container %s failed: %v", c.id, err)
+		} else {
+			logrus.Warn("runc create/exec call failed without writing error to log file")
+			return nil, errors.Wrapf(err, "runc create/exec call for container %s failed", c.id)
+		}
+
 	}
 
 	var ttyRelay *stdio.TtyRelay
