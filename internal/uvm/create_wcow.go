@@ -45,12 +45,7 @@ var (
 )
 
 type ConfidentialWCOWOptions struct {
-	GuestStateFilePath     string // The vmgs file path
-	SecurityPolicyEnabled  bool   // Set when there is a security policy to apply on actual SNP hardware, use this rathen than checking the string length
-	SecurityPolicy         string // Optional security policy
-	SecurityPolicyEnforcer string // Set which security policy enforcer to use (open door or rego). This allows for better fallback mechanic.
-	UVMReferenceInfoFile   string // Path to the file that contains the signed UVM measurements
-
+	*ConfidentialCommonOptions
 	/* Below options are only included for testing/debugging purposes - shouldn't be used in regular scenarios */
 	IsolationType      string
 	DisableSecureBoot  bool
@@ -108,12 +103,16 @@ func GetDefaultReferenceInfoFilePath() string {
 // executable files name.
 func NewDefaultOptionsWCOW(id, owner string) *OptionsWCOW {
 	return &OptionsWCOW{
-		Options:                 newDefaultOptions(id, owner),
-		AdditionalRegistryKeys:  []hcsschema.RegistryValue{},
-		ConfidentialWCOWOptions: &ConfidentialWCOWOptions{},
-		OutputHandlerCreator:    parseLogrus,
-		ForwardLogs:             true, // Default to true for WCOW, and set to false for CWCOW in internal/oci/uvm.go SpecToUVMCreateOpts
-		LogSources:              "",
+		Options:                newDefaultOptions(id, owner),
+		AdditionalRegistryKeys: []hcsschema.RegistryValue{},
+		ConfidentialWCOWOptions: &ConfidentialWCOWOptions{
+			ConfidentialCommonOptions: &ConfidentialCommonOptions{
+				SecurityPolicyEnabled: false,
+			},
+		},
+		OutputHandlerCreator: parseLogrus,
+		ForwardLogs:          true, // Default to true for WCOW, and set to false for CWCOW in internal/oci/uvm.go SpecToUVMCreateOpts
+		LogSources:           "",
 	}
 }
 
