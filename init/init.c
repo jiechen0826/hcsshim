@@ -18,6 +18,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <dirent.h>
 
 #ifdef MODULES
 #include <ftw.h>
@@ -75,6 +76,11 @@ const char* kmod_xz_ext = ".ko.xz";
 const char* const default_argv[] = {"/bin/gcs", "-loglevel", "debug", "-logfile=/run/gcs/gcs.log"};
 const char* const default_shell = "/bin/sh";
 const char* const lib_modules = "/lib/modules";
+
+// Forward declarations
+void dmesgInfo(const char* msg);
+void dmesgWarn(const char* msg);
+void init_cgroups_v1(void);
 
 struct Mount {
     const char *source, *target, *type;
@@ -136,7 +142,7 @@ const struct InitOp ops[] = {
 
     // mount /sys (which should already exist)
     {OpMount, .mount = {"sysfs", "/sys", "sysfs", MS_NODEV | MS_NOSUID | MS_NOEXEC}},
-    {OpMount, .mount = {"cgroup_root", "/sys/fs/cgroup", "tmpfs", MS_NODEV | MS_NOSUID | MS_NOEXEC, "mode=0755"}},
+    // NOTE: Removed tmpfs mount of /sys/fs/cgroup - will be handled by init_cgroups()
 };
 
 /*
@@ -304,12 +310,44 @@ void init_fs(const struct InitOp* ops, size_t count) {
     }
 }
 
-void init_cgroups() {
+// Check if cgroup v2 is available and preferred
+bool is_cgroup_v2_available() {
+    dmesgInfo("cgroup v2: checking if controllers file exists\n");
+    // Check if cgroup v2 controllers are available
+    if (access("/sys/fs/cgroup/cgroup.controllers", F_OK) == 0) {
+        dmesgInfo("cgroup v2: controllers file found\n");
+        return true;
+    }
+    dmesgInfo("cgroup v2: controllers file not found\n");
+    return false;
+}
+
+void init_cgroups_v2() {
+    // Mount cgroup v2 unified hierarchy
+    const char* mount_path = "/sys/fs/cgroup";
+
+    dmesgInfo("cgroup v2: attempting to mount\n");
+    if (mount("cgroup2", mount_path, "cgroup2", MS_NODEV | MS_NOSUID | MS_NOEXEC, "") < 0) {
+        // If cgroup v2 mount fails, fall back to v1
+        dmesgInfo("cgroup v2: mount failed, falling back to v1\n");
+        init_cgroups_v1();
+        return;
+    }
+    dmesgInfo("cgroup v2: mount succeeded\n");
+}
+
+void init_cgroups_v1() {
     const char* fpath = "/proc/cgroups";
     FILE* f = fopen(fpath, "r");
     if (f == NULL) {
         die2("fopen", fpath);
     }
+
+    // For cgroup v1, we need to mount tmpfs at /sys/fs/cgroup first
+    if (mount("cgroup_root", "/sys/fs/cgroup", "tmpfs", MS_NODEV | MS_NOSUID | MS_NOEXEC, "mode=0755") < 0) {
+        dmesgWarn("failed to mount tmpfs for cgroup v1, continuing anyway\n");
+    }
+
     // Skip the first line.
     for (;;) {
         char c = fgetc(f);
@@ -341,6 +379,18 @@ void init_cgroups() {
         }
     }
     fclose(f);
+}
+
+void init_cgroups() {
+    dmesgInfo("cgroup initialization: starting\n");
+    // Conservative approach: Try cgroup v2, fall back to v1 if needed
+    if (is_cgroup_v2_available()) {
+        dmesgInfo("cgroup v2 detected, attempting to mount\n");
+        init_cgroups_v2();
+    } else {
+        dmesgInfo("cgroup v2 not available, using v1\n");
+        init_cgroups_v1();
+    }
 }
 
 void init_network(const char* iface, int domain) {
@@ -768,6 +818,7 @@ int main(int argc, char** argv) {
 #ifdef DEBUG
     printf("init_cgroups\n");
 #endif
+    dmesgInfo("Microsoft.hcsshim init: cgroup migration version starting\n");
     init_cgroups();
 
 #ifdef DEBUG

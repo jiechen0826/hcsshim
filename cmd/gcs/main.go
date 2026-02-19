@@ -34,6 +34,12 @@ import (
 	"github.com/Microsoft/hcsshim/pkg/securitypolicy"
 )
 
+// isCgroupV2 checks if cgroup v2 is available on the system
+func isCgroupV2() bool {
+	_, err := os.Stat("/sys/fs/cgroup/cgroup.controllers")
+	return err == nil
+}
+
 func memoryLogFormat(metrics *cgroupstats.Metrics) logrus.Fields {
 	return logrus.Fields{
 		"memoryUsage":      metrics.Memory.Usage.Usage,
@@ -283,6 +289,13 @@ func main() {
 		"commit":  version.Commit,
 		"version": version.Version,
 	}).Info("GCS started")
+
+	// Log which cgroup version is detected
+	if isCgroupV2() {
+		logrus.Info("cgroup v2 detected by GCS")
+	} else {
+		logrus.Info("cgroup v1 detected by GCS")
+	}
 
 	// Set the process core dump location. This will be global to all containers as it's a kernel configuration.
 	// If no path is specified core dumps will just be placed in the working directory of wherever the process
