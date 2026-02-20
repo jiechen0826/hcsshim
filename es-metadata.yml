@@ -1,8 +1,7 @@
 schemaVersion: 1.0.0
-
 providers:
-  # see: https://aka.ms/inventory-as-code
   - provider: InventoryAsCode
+    # see: https://aka.ms/inventory-as-code
     version: 1.0.0
     metadata:
       isProduction: true
@@ -12,3 +11,14 @@ providers:
         defaultAreaPath:
           org: microsoft
           path: OS\Core\Base\VMAC - Virtual Machines and Containers\CPlat-Container Platform
+
+  - provider: Ownership/CodeReviewers
+    # see: https://aka.ms/codeReviewers
+    version: 1.0.0
+    metadata:
+      options:
+        allowInheritance: true
+      reviewers:
+        - scope: "[AnyFile]"
+          optional:
+            - containerplat-dev
