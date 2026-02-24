@@ -293,6 +293,31 @@ func main() {
 	// Log which cgroup version is detected
 	if isCgroupV2() {
 		logrus.Info("cgroup v2 detected by GCS")
+		// TEMPORARY: Fallback to cgroup v1 for compatibility with current cgroup library
+		logrus.Warn("cgroup v2 detected but GCS currently requires cgroup v1 - remounting as v1")
+
+		// Unmount cgroup v2 and remount as v1
+		if err := syscall.Unmount("/sys/fs/cgroup", 0); err != nil {
+			logrus.WithError(err).Fatal("failed to unmount cgroup v2")
+		}
+
+		// Mount tmpfs for cgroup v1
+		if err := syscall.Mount("cgroup_root", "/sys/fs/cgroup", "tmpfs", syscall.MS_NODEV|syscall.MS_NOSUID|syscall.MS_NOEXEC, "mode=0755"); err != nil {
+			logrus.WithError(err).Fatal("failed to mount tmpfs for cgroup v1")
+		}
+
+		// Remount individual cgroup v1 controllers (simplified version)
+		controllers := []string{"memory", "cpu", "cpuacct", "devices", "freezer", "pids"}
+		for _, controller := range controllers {
+			path := filepath.Join("/sys/fs/cgroup", controller)
+			if err := os.Mkdir(path, 0755); err != nil {
+				logrus.WithError(err).WithField("controller", controller).Fatal("failed to create cgroup v1 controller directory")
+			}
+			if err := syscall.Mount(controller, path, "cgroup", syscall.MS_NODEV|syscall.MS_NOSUID|syscall.MS_NOEXEC, controller); err != nil {
+				logrus.WithError(err).WithField("controller", controller).Fatal("failed to mount cgroup v1 controller")
+			}
+		}
+		logrus.Info("successfully remounted cgroup v1 for GCS compatibility")
 	} else {
 		logrus.Info("cgroup v1 detected by GCS")
 	}
@@ -320,9 +345,13 @@ func main() {
 
 	// Write 1 to memory.use_hierarchy on the root cgroup to enable hierarchy
 	// support. This needs to be set before we create any cgroups as the write
-	// will fail otherwise.
-	if err := os.WriteFile("/sys/fs/cgroup/memory/memory.use_hierarchy", []byte("1"), 0644); err != nil {
-		logrus.WithError(err).Fatal("failed to enable hierarchy support for root cgroup")
+	// will fail otherwise. This is only needed for cgroup v1.
+	if !isCgroupV2() {
+		if err := os.WriteFile("/sys/fs/cgroup/memory/memory.use_hierarchy", []byte("1"), 0644); err != nil {
+			logrus.WithError(err).Fatal("failed to enable hierarchy support for root cgroup")
+		}
+	} else {
+		logrus.Info("cgroup v2 detected - hierarchy always enabled, skipping memory.use_hierarchy")
 	}
 
 	// The containers cgroup is limited only by {Totalram - 75 MB

@@ -81,6 +81,7 @@ const char* const lib_modules = "/lib/modules";
 void dmesgInfo(const char* msg);
 void dmesgWarn(const char* msg);
 void init_cgroups_v1(void);
+bool is_cgroup_v2_available(void);
 
 struct Mount {
     const char *source, *target, *type;
@@ -310,30 +311,29 @@ void init_fs(const struct InitOp* ops, size_t count) {
     }
 }
 
-// Check if cgroup v2 is available and preferred
+// Try mounting cgroup v2 to see if it works
 bool is_cgroup_v2_available() {
-    dmesgInfo("cgroup v2: checking if controllers file exists\n");
-    // Check if cgroup v2 controllers are available
-    if (access("/sys/fs/cgroup/cgroup.controllers", F_OK) == 0) {
-        dmesgInfo("cgroup v2: controllers file found\n");
-        return true;
+    // Try to mount cgroup v2 to test if it works
+    if (mount("cgroup2", "/sys/fs/cgroup", "cgroup2", MS_NODEV | MS_NOSUID | MS_NOEXEC, "") < 0) {
+        dmesgInfo("cgroup v2: test mount failed\n");
+        return false;
     }
-    dmesgInfo("cgroup v2: controllers file not found\n");
+    
+    // Check if controllers file appeared
+    if (access("/sys/fs/cgroup/cgroup.controllers", F_OK) == 0) {
+        dmesgInfo("cgroup v2: test mount successful, controllers found\n");
+        return true; // Leave it mounted, init_cgroups_v2() will just log success
+    }
+    
+    // Mount worked but no controllers - clean up
+    dmesgInfo("cgroup v2: test mount succeeded but no controllers\n");
+    umount("/sys/fs/cgroup");
     return false;
 }
 
 void init_cgroups_v2() {
-    // Mount cgroup v2 unified hierarchy
-    const char* mount_path = "/sys/fs/cgroup";
-
-    dmesgInfo("cgroup v2: attempting to mount\n");
-    if (mount("cgroup2", mount_path, "cgroup2", MS_NODEV | MS_NOSUID | MS_NOEXEC, "") < 0) {
-        // If cgroup v2 mount fails, fall back to v1
-        dmesgInfo("cgroup v2: mount failed, falling back to v1\n");
-        init_cgroups_v1();
-        return;
-    }
-    dmesgInfo("cgroup v2: mount succeeded\n");
+    // cgroup v2 should already be mounted by is_cgroup_v2_available()
+    dmesgInfo("cgroup v2: already mounted and ready\n");
 }
 
 void init_cgroups_v1() {
@@ -382,13 +382,12 @@ void init_cgroups_v1() {
 }
 
 void init_cgroups() {
-    dmesgInfo("cgroup initialization: starting\n");
-    // Conservative approach: Try cgroup v2, fall back to v1 if needed
+    // Conservative approach: only use cgroup v2 if already available
     if (is_cgroup_v2_available()) {
-        dmesgInfo("cgroup v2 detected, attempting to mount\n");
+        dmesgInfo("Using cgroup v2\n");
         init_cgroups_v2();
     } else {
-        dmesgInfo("cgroup v2 not available, using v1\n");
+        dmesgInfo("Using cgroup v1\n");
         init_cgroups_v1();
     }
 }
