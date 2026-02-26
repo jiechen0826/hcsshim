@@ -15,12 +15,14 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	cgroups "github.com/containerd/cgroups/v3/cgroup1"
-	cgroupstats "github.com/containerd/cgroups/v3/cgroup1/stats"
+	cgroups1 "github.com/containerd/cgroups/v3/cgroup1"
+	cgroups1stats "github.com/containerd/cgroups/v3/cgroup1/stats"
+	cgroups2 "github.com/containerd/cgroups/v3/cgroup2"
 	oci "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"go.opencensus.io/trace"
+	"golang.org/x/sys/unix"
 
 	"github.com/Microsoft/hcsshim/internal/guest/bridge"
 	"github.com/Microsoft/hcsshim/internal/guest/kmsg"
@@ -40,7 +42,141 @@ func isCgroupV2() bool {
 	return err == nil
 }
 
-func memoryLogFormat(metrics *cgroupstats.Metrics) logrus.Fields {
+// CgroupManager provides a unified interface for cgroup v1 and v2 operations
+type CgroupManager interface {
+	Add(process cgroups1.Process, names ...cgroups1.Name) error
+	Delete() error
+	RegisterMemoryEvent(event cgroups1.MemoryEvent) (uintptr, error)
+	OOMEventFD() (uintptr, error)
+	// GetV1Cgroup returns the underlying v1 cgroup if available, nil for v2
+	GetV1Cgroup() cgroups1.Cgroup
+}
+
+// V1Manager wraps cgroup v1 operations
+type V1Manager struct {
+	cg cgroups1.Cgroup
+}
+
+func (v *V1Manager) Add(process cgroups1.Process, names ...cgroups1.Name) error {
+	return v.cg.Add(process, names...)
+}
+
+func (v *V1Manager) Delete() error {
+	return v.cg.Delete()
+}
+
+func (v *V1Manager) RegisterMemoryEvent(event cgroups1.MemoryEvent) (uintptr, error) {
+	return v.cg.RegisterMemoryEvent(event)
+}
+
+func (v *V1Manager) OOMEventFD() (uintptr, error) {
+	return v.cg.OOMEventFD()
+}
+
+func (v *V1Manager) GetV1Cgroup() cgroups1.Cgroup {
+	return v.cg
+}
+
+// V2Manager wraps cgroup v2 operations
+type V2Manager struct {
+	mgr  cgroups2.Manager
+	path string
+}
+
+func (v *V2Manager) Add(process cgroups1.Process, names ...cgroups1.Name) error {
+	// Convert v1 Process to v2 process (v2 doesn't use subsystem names)
+	return v.mgr.AddProc(uint64(process.Pid))
+}
+
+func (v *V2Manager) Delete() error {
+	return v.mgr.Delete()
+}
+
+func (v *V2Manager) RegisterMemoryEvent(event cgroups1.MemoryEvent) (uintptr, error) {
+	// For cgroup v2, create a dummy eventfd that never triggers to maintain compatibility
+	// This allows GCS to start while we work on proper v2 memory event implementation
+	fd, err := unix.Eventfd(0, unix.EFD_CLOEXEC)
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to create eventfd for v2 memory event")
+	}
+	logrus.WithFields(logrus.Fields{
+		"cgroup_version": "v2",
+		"event_type":     "memory_threshold",
+	}).Info("Created dummy eventfd for cgroup v2 memory event (monitoring disabled)")
+	return uintptr(fd), nil
+}
+
+func (v *V2Manager) OOMEventFD() (uintptr, error) {
+	// For cgroup v2, create a dummy eventfd that never triggers to maintain compatibility
+	// This allows GCS to start while we work on proper v2 OOM event implementation
+	fd, err := unix.Eventfd(0, unix.EFD_CLOEXEC)
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to create eventfd for v2 OOM event")
+	}
+	logrus.WithFields(logrus.Fields{
+		"cgroup_version": "v2",
+		"event_type":     "oom",
+	}).Info("Created dummy eventfd for cgroup v2 OOM event (monitoring disabled)")
+	return uintptr(fd), nil
+}
+
+func (v *V2Manager) GetV1Cgroup() cgroups1.Cgroup {
+	return nil
+}
+
+// convertToV2Resources converts oci.LinuxResources to cgroups2.Resources
+func convertToV2Resources(resources *oci.LinuxResources) *cgroups2.Resources {
+	if resources == nil {
+		return &cgroups2.Resources{}
+	}
+	v2Resources := &cgroups2.Resources{}
+
+	// Convert memory settings
+	if resources.Memory != nil {
+		if resources.Memory.Limit != nil {
+			v2Resources.Memory = &cgroups2.Memory{
+				Max: resources.Memory.Limit,
+			}
+		}
+	}
+
+	// Convert CPU settings
+	if resources.CPU != nil {
+		v2Resources.CPU = &cgroups2.CPU{}
+		if resources.CPU.Shares != nil {
+			// Convert CPU shares to weight (cgroup v2 uses weight instead of shares)
+			// Formula: weight = 1 + (shares - 2) * 9999 / 262142
+			weight := uint64(1 + (*resources.CPU.Shares-2)*9999/262142)
+			v2Resources.CPU.Weight = &weight
+		}
+	}
+
+	return v2Resources
+}
+
+// createCgroupManager creates appropriate cgroup manager based on system version
+func createCgroupManager(path string, resources *oci.LinuxResources) (CgroupManager, error) {
+	if isCgroupV2() {
+		logrus.Info("Creating cgroup v2 manager for path: " + path)
+		// Create cgroup v2 manager with converted resources
+		v2Resources := convertToV2Resources(resources)
+		mgr, err := cgroups2.NewManager("/sys/fs/cgroup", path, v2Resources)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create cgroup v2 manager")
+		}
+		return &V2Manager{mgr: *mgr, path: path}, nil
+	} else {
+		logrus.Info("Creating cgroup v1 manager for path: " + path)
+		// Create cgroup v1 manager
+		cg, err := cgroups1.New(cgroups1.StaticPath(path), resources)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create cgroup v1 manager")
+		}
+		return &V1Manager{cg: cg}, nil
+	}
+}
+
+func memoryLogFormat(metrics *cgroups1stats.Metrics) logrus.Fields {
 	return logrus.Fields{
 		"memoryUsage":      metrics.Memory.Usage.Usage,
 		"memoryUsageMax":   metrics.Memory.Usage.Max,
@@ -54,7 +190,7 @@ func memoryLogFormat(metrics *cgroupstats.Metrics) logrus.Fields {
 	}
 }
 
-func readMemoryEvents(startTime time.Time, efdFile *os.File, cgName string, threshold int64, cg cgroups.Cgroup) {
+func readMemoryEvents(startTime time.Time, efdFile *os.File, cgName string, threshold int64, cg cgroups1.Cgroup) {
 	// Buffer must be >= 8 bytes for eventfd reads
 	// http://man7.org/linux/man-pages/man2/eventfd.2.html
 	count := 0
@@ -90,7 +226,7 @@ func readMemoryEvents(startTime time.Time, efdFile *os.File, cgName string, thre
 		// Sleep for one second in case there is a series of allocations slightly after
 		// reaching threshold.
 		time.Sleep(time.Second)
-		metrics, err := cg.Stat(cgroups.IgnoreNotExist)
+		metrics, err := cg.Stat(cgroups1.IgnoreNotExist)
 		if err != nil {
 			// Don't return on Stat err as it will return an error if
 			// any of the cgroup subsystems Stat calls failed for any reason.
@@ -290,36 +426,11 @@ func main() {
 		"version": version.Version,
 	}).Info("GCS started")
 
-	// Log which cgroup version is detected
+	// Log which cgroup version is detected and will be used
 	if isCgroupV2() {
-		logrus.Info("cgroup v2 detected by GCS")
-		// TEMPORARY: Fallback to cgroup v1 for compatibility with current cgroup library
-		logrus.Warn("cgroup v2 detected but GCS currently requires cgroup v1 - remounting as v1")
-
-		// Unmount cgroup v2 and remount as v1
-		if err := syscall.Unmount("/sys/fs/cgroup", 0); err != nil {
-			logrus.WithError(err).Fatal("failed to unmount cgroup v2")
-		}
-
-		// Mount tmpfs for cgroup v1
-		if err := syscall.Mount("cgroup_root", "/sys/fs/cgroup", "tmpfs", syscall.MS_NODEV|syscall.MS_NOSUID|syscall.MS_NOEXEC, "mode=0755"); err != nil {
-			logrus.WithError(err).Fatal("failed to mount tmpfs for cgroup v1")
-		}
-
-		// Remount individual cgroup v1 controllers (simplified version)
-		controllers := []string{"memory", "cpu", "cpuacct", "devices", "freezer", "pids"}
-		for _, controller := range controllers {
-			path := filepath.Join("/sys/fs/cgroup", controller)
-			if err := os.Mkdir(path, 0755); err != nil {
-				logrus.WithError(err).WithField("controller", controller).Fatal("failed to create cgroup v1 controller directory")
-			}
-			if err := syscall.Mount(controller, path, "cgroup", syscall.MS_NODEV|syscall.MS_NOSUID|syscall.MS_NOEXEC, controller); err != nil {
-				logrus.WithError(err).WithField("controller", controller).Fatal("failed to mount cgroup v1 controller")
-			}
-		}
-		logrus.Info("successfully remounted cgroup v1 for GCS compatibility")
+		logrus.Info("cgroup v2 detected by GCS - using v2 API")
 	} else {
-		logrus.Info("cgroup v1 detected by GCS")
+		logrus.Info("cgroup v1 detected by GCS - using v1 API")
 	}
 
 	// Set the process core dump location. This will be global to all containers as it's a kernel configuration.
@@ -364,7 +475,7 @@ func main() {
 		logrus.WithError(err).Fatal("failed to get sys info")
 	}
 	containersLimit := int64(sinfo.Totalram - *rootMemReserveBytes)
-	containersControl, err := cgroups.New(cgroups.StaticPath("/containers"), &oci.LinuxResources{
+	containersControl, err := createCgroupManager("/containers", &oci.LinuxResources{
 		Memory: &oci.LinuxMemory{
 			Limit: &containersLimit,
 		},
@@ -376,7 +487,7 @@ func main() {
 
 	// Create virtual-pods cgroup hierarchy for multi-pod support
 	// This will be the parent for all virtual pod cgroups: /containers/virtual-pods/{virtualSandboxID}
-	virtualPodsControl, err := cgroups.New(cgroups.StaticPath("/containers/virtual-pods"), &oci.LinuxResources{
+	virtualPodsControl, err := createCgroupManager("/containers/virtual-pods", &oci.LinuxResources{
 		Memory: &oci.LinuxMemory{
 			Limit: &containersLimit, // Share the same limit as containers
 		},
@@ -386,12 +497,12 @@ func main() {
 	}
 	defer virtualPodsControl.Delete() //nolint:errcheck
 
-	gcsControl, err := cgroups.New(cgroups.StaticPath("/gcs"), &oci.LinuxResources{})
+	gcsControl, err := createCgroupManager("/gcs", &oci.LinuxResources{})
 	if err != nil {
 		logrus.WithError(err).Fatal("failed to create gcs cgroup")
 	}
 	defer gcsControl.Delete() //nolint:errcheck
-	if err := gcsControl.Add(cgroups.Process{Pid: os.Getpid()}); err != nil {
+	if err := gcsControl.Add(cgroups1.Process{Pid: os.Getpid()}); err != nil {
 		logrus.WithError(err).Fatal("failed add gcs pid to gcs cgroup")
 	}
 
@@ -407,7 +518,11 @@ func main() {
 	}
 	h := hcsv2.NewHost(rtime, tport, initialEnforcer, logWriter)
 	// Initialize virtual pod support in the host
-	h.InitializeVirtualPodSupport(virtualPodsControl)
+	if v1Cgroup := virtualPodsControl.GetV1Cgroup(); v1Cgroup != nil {
+		h.InitializeVirtualPodSupport(v1Cgroup)
+	} else {
+		logrus.Warn("Virtual pod support initialization skipped for cgroup v2 (not yet implemented)")
+	}
 	b.AssignHandlers(mux, h)
 
 	var bridgeIn io.ReadCloser
@@ -428,7 +543,7 @@ func main() {
 		bridgeOut = bridgeCon
 	}
 
-	event := cgroups.MemoryThresholdEvent(*gcsMemLimitBytes, false)
+	event := cgroups1.MemoryThresholdEvent(*gcsMemLimitBytes, false)
 	gefd, err := gcsControl.RegisterMemoryEvent(event)
 	if err != nil {
 		logrus.WithError(err).Fatal("failed to register memory threshold for gcs cgroup")
@@ -458,9 +573,27 @@ func main() {
 		}
 	}
 
-	go readMemoryEvents(startTime, gefdFile, "/gcs", int64(*gcsMemLimitBytes), gcsControl)
-	go readMemoryEvents(startTime, oomFile, "/containers", containersLimit, containersControl)
-	go readMemoryEvents(startTime, virtualPodsOomFile, "/containers/virtual-pods", containersLimit, virtualPodsControl)
+	go func() {
+		if v1Cgroup := gcsControl.GetV1Cgroup(); v1Cgroup != nil {
+			readMemoryEvents(startTime, gefdFile, "/gcs", int64(*gcsMemLimitBytes), v1Cgroup)
+		} else {
+			logrus.Warn("Memory events for /gcs skipped for cgroup v2 (not yet implemented)")
+		}
+	}()
+	go func() {
+		if v1Cgroup := containersControl.GetV1Cgroup(); v1Cgroup != nil {
+			readMemoryEvents(startTime, oomFile, "/containers", containersLimit, v1Cgroup)
+		} else {
+			logrus.Warn("Memory events for /containers skipped for cgroup v2 (not yet implemented)")
+		}
+	}()
+	go func() {
+		if v1Cgroup := virtualPodsControl.GetV1Cgroup(); v1Cgroup != nil {
+			readMemoryEvents(startTime, virtualPodsOomFile, "/containers/virtual-pods", containersLimit, v1Cgroup)
+		} else {
+			logrus.Warn("Memory events for /containers/virtual-pods skipped for cgroup v2 (not yet implemented)")
+		}
+	}()
 	err = b.ListenAndServe(bridgeIn, bridgeOut)
 	if err != nil {
 		logrus.WithFields(logrus.Fields{
