@@ -10,7 +10,7 @@ WORKDIR /app
 COPY ./delayed-shutdown.go ./
 RUN go build -o delayed-shutdown.exe
 
-FROM mcr.microsoft.com/windows/nanoserver:ltsc2022@sha256:643adf84ee2338ee4811fd891adb9e912917dc6c0ca85399982e1bebda4f2295
+FROM mcr.microsoft.com/windows/nanoserver:ltsc2022@sha256:60612a30303eb5a15ce7f53fa2eecf70bca41d72657de0482fbde601ae5f3403
 WORKDIR /app
 COPY --from=build /app/delayed-shutdown.exe .
 ENTRYPOINT ["delayed-shutdown.exe"]
