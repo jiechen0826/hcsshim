@@ -1,5 +1,5 @@
 # Test image for ArgsEscaped behavior.
 # cplatpublic.azurecr.io/argsescaped:latest
-FROM mcr.microsoft.com/windows/nanoserver:1809@sha256:244f1c6f590ca5a417c241a11cd6719a456f9771c45a0c2b195d5636763a7f0e
+FROM mcr.microsoft.com/windows/nanoserver:1809@sha256:1aa377c7a6b7b564e3fd5efcfa65fc85852f4e8199c0d1a40b5faf2abcab56de
 ENTRYPOINT cmd.exe /c
 CMD ping -t 127.0.0.1
