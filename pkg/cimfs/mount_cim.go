@@ -11,6 +11,7 @@ import (
 
 	"github.com/Microsoft/go-winio/pkg/guid"
 	"github.com/Microsoft/hcsshim/internal/winapi"
+	winapitypes "github.com/Microsoft/hcsshim/internal/winapi/types"
 	"github.com/pkg/errors"
 	"golang.org/x/sys/windows"
 )
@@ -74,7 +75,7 @@ func Unmount(volumePath string) error {
 // `MergeBlockCIMs`) at a volume with given GUID. The `sourceCIMs` MUST be identical
 // to the `sourceCIMs` passed to `MergeBlockCIMs` when creating this merged CIM.
 func MountMergedBlockCIMs(mergedCIM *BlockCIM, sourceCIMs []*BlockCIM, mountFlags uint32, volumeGUID guid.GUID) (string, error) {
-	if !IsMergedCimSupported() {
+	if !IsMergedCimMountSupported() {
 		return "", fmt.Errorf("merged CIMs aren't supported on this OS version")
 	} else if len(sourceCIMs) < 2 {
 		return "", fmt.Errorf("need at least 2 source CIMs, got %d: %w", len(sourceCIMs), os.ErrInvalid)
@@ -99,7 +100,7 @@ func MountMergedBlockCIMs(mergedCIM *BlockCIM, sourceCIMs []*BlockCIM, mountFlag
 	// should be the merged CIM. All remaining entries should be the source CIM paths
 	// in the same order that was used while creating the merged CIM.
 	allcims := append([]*BlockCIM{mergedCIM}, sourceCIMs...)
-	cimsToMerge := []winapi.CimFsImagePath{}
+	cimsToMerge := []winapitypes.CimFsImagePath{}
 	for _, bcim := range allcims {
 		// Trailing backslashes cause problems-remove those
 		imageDir, err := windows.UTF16PtrFromString(strings.TrimRight(bcim.BlockPath, `\`))
@@ -111,7 +112,7 @@ func MountMergedBlockCIMs(mergedCIM *BlockCIM, sourceCIMs []*BlockCIM, mountFlag
 			return "", fmt.Errorf("convert string to utf16: %w", err)
 		}
 
-		cimsToMerge = append(cimsToMerge, winapi.CimFsImagePath{
+		cimsToMerge = append(cimsToMerge, winapitypes.CimFsImagePath{
 			ImageDir:  imageDir,
 			ImageName: cimName,
 		})
@@ -161,7 +162,7 @@ func MountVerifiedBlockCIM(bCIM *BlockCIM, mountFlags uint32, volumeGUID guid.GU
 // to match against the provided root hash if it doesn't, the read will fail.  The source
 // CIMs and the merged CIM MUST have been created with the verified creation flag.
 func MountMergedVerifiedBlockCIMs(mergedCIM *BlockCIM, sourceCIMs []*BlockCIM, mountFlags uint32, volumeGUID guid.GUID, rootHash []byte) (string, error) {
-	if !IsVerifiedCimSupported() {
+	if !IsVerifiedCimMountSupported() {
 		return "", fmt.Errorf("verified CIMs aren't supported on this OS version")
 	} else if len(sourceCIMs) < 2 {
 		return "", fmt.Errorf("need at least 2 source CIMs, got %d: %w", len(sourceCIMs), os.ErrInvalid)
@@ -188,7 +189,7 @@ func MountMergedVerifiedBlockCIMs(mergedCIM *BlockCIM, sourceCIMs []*BlockCIM, m
 	// should be the merged CIM. All remaining entries should be the source CIM paths
 	// in the same order that was used while creating the merged CIM.
 	allcims := append([]*BlockCIM{mergedCIM}, sourceCIMs...)
-	cimsToMerge := []winapi.CimFsImagePath{}
+	cimsToMerge := []winapitypes.CimFsImagePath{}
 	for _, bcim := range allcims {
 		// Trailing backslashes cause problems-remove those
 		imageDir, err := windows.UTF16PtrFromString(strings.TrimRight(bcim.BlockPath, `\`))
@@ -200,7 +201,7 @@ func MountMergedVerifiedBlockCIMs(mergedCIM *BlockCIM, sourceCIMs []*BlockCIM, m
 			return "", fmt.Errorf("convert string to utf16: %w", err)
 		}
 
-		cimsToMerge = append(cimsToMerge, winapi.CimFsImagePath{
+		cimsToMerge = append(cimsToMerge, winapitypes.CimFsImagePath{
 			ImageDir:  imageDir,
 			ImageName: cimName,
 		})

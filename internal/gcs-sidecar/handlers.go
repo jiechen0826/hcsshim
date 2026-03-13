@@ -104,11 +104,13 @@ func (b *Bridge) createContainer(req *request) (err error) {
 			log.G(ctx).Tracef("Container exists in the map.")
 			return err
 		}
-		defer func(err error) {
+		defer func() {
 			if err != nil {
-				b.hostState.RemoveContainer(ctx, containerID)
+				if removeErr := b.hostState.RemoveContainer(ctx, containerID); removeErr != nil {
+					log.G(ctx).WithError(removeErr).Errorf("Failed to remove container: %v", containerID)
+				}
 			}
-		}(err)
+		}()
 
 		if oci.ParseAnnotationsBool(ctx, spec.Annotations, annotations.WCOWSecurityPolicyEnv, true) {
 			if err := b.hostState.securityOptions.WriteSecurityContextDir(&spec); err != nil {
@@ -459,13 +461,11 @@ func (b *Bridge) deleteContainerState(req *request) (err error) {
 	if err := commonutils.UnmarshalJSONWithHresult(req.message, &r); err != nil {
 		return fmt.Errorf("failed to unmarshal deleteContainerState: %w", err)
 	}
-	_, err = b.hostState.GetCreatedContainer(req.ctx, r.ContainerID)
+	err = b.hostState.RemoveContainer(req.ctx, r.ContainerID)
 	if err != nil {
 		log.G(req.ctx).Tracef("Container not found during deleteContainerState: %v", r.ContainerID)
 		return fmt.Errorf("container not found: %w", err)
 	}
-	// remove container state regardless of delete's success
-	defer b.hostState.RemoveContainer(req.ctx, r.ContainerID)
 
 	b.forwardRequestToGcs(req)
 	return nil
@@ -641,11 +641,7 @@ func (b *Bridge) modifySettings(req *request) (err error) {
 					log.G(ctx).Debugf("block CIM layer digest %s, path: %s\n", layerHashes[i], physicalDevPath)
 				}
 
-				// skip the merged cim and verify individual layer hashes
 				hashesToVerify := layerHashes
-				if len(layerHashes) > 1 {
-					hashesToVerify = layerHashes[1:]
-				}
 
 				err := b.hostState.securityOptions.PolicyEnforcer.EnforceVerifiedCIMsPolicy(req.ctx, containerID, hashesToVerify)
 				if err != nil {

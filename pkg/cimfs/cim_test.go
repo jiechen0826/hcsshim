@@ -9,11 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
-	"syscall"
-
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -21,7 +20,16 @@ import (
 	"github.com/Microsoft/go-winio/pkg/guid"
 	vhd "github.com/Microsoft/go-winio/vhd"
 	"golang.org/x/sys/windows"
+
+	"github.com/Microsoft/hcsshim/internal/winapi/cimfs"
+	"github.com/Microsoft/hcsshim/internal/winapi/cimwriter"
 )
+
+func TestMain(m *testing.M) {
+	fmt.Printf("cimfs.dll supported: %v\n", cimfs.Supported())
+	fmt.Printf("cimwriter.dll supported: %v\n", cimwriter.Supported())
+	os.Exit(m.Run())
+}
 
 // A simple tuple type used to hold information about a file/directory that is created
 // during a test.
@@ -218,7 +226,7 @@ func TestCimReadWrite(t *testing.T) {
 }
 
 func TestBlockCIMInvalidCimName(t *testing.T) {
-	if !IsBlockCimSupported() {
+	if !IsBlockCimWriteSupported() {
 		t.Skip("blockCIM not supported on this OS version")
 	}
 
@@ -231,7 +239,7 @@ func TestBlockCIMInvalidCimName(t *testing.T) {
 }
 
 func TestBlockCIMInvalidBlockPath(t *testing.T) {
-	if !IsBlockCimSupported() {
+	if !IsBlockCimWriteSupported() {
 		t.Skip("blockCIM not supported on this OS version")
 	}
 
@@ -244,7 +252,7 @@ func TestBlockCIMInvalidBlockPath(t *testing.T) {
 }
 
 func TestBlockCIMInvalidType(t *testing.T) {
-	if !IsBlockCimSupported() {
+	if !IsBlockCimWriteSupported() {
 		t.Skip("blockCIM not supported on this OS version")
 	}
 
@@ -257,7 +265,7 @@ func TestBlockCIMInvalidType(t *testing.T) {
 }
 
 func TestCIMMergeInvalidType(t *testing.T) {
-	if !IsBlockCimSupported() {
+	if !IsBlockCimMountSupported() {
 		t.Skip("blockCIM not supported on this OS version")
 	}
 
@@ -274,7 +282,7 @@ func TestCIMMergeInvalidType(t *testing.T) {
 }
 
 func TestCIMMergeInvalidSourceType(t *testing.T) {
-	if !IsBlockCimSupported() {
+	if !IsBlockCimMountSupported() {
 		t.Skip("blockCIM not supported on this OS version")
 	}
 
@@ -305,7 +313,7 @@ func TestCIMMergeInvalidSourceType(t *testing.T) {
 }
 
 func TestCIMMergeInvalidLength(t *testing.T) {
-	if !IsBlockCimSupported() {
+	if !IsBlockCimMountSupported() {
 		t.Skip("blockCIM not supported on this OS version")
 	}
 
@@ -321,7 +329,7 @@ func TestCIMMergeInvalidLength(t *testing.T) {
 }
 
 func TestBlockCIMEmpty(t *testing.T) {
-	if !IsBlockCimSupported() {
+	if !IsBlockCimWriteSupported() {
 		t.Skip("blockCIM not supported on this OS version")
 	}
 
@@ -339,7 +347,7 @@ func TestBlockCIMEmpty(t *testing.T) {
 }
 
 func TestBlockCIMSingleFileReadWrite(t *testing.T) {
-	if !IsBlockCimSupported() {
+	if !IsBlockCimMountSupported() {
 		t.Skip("blockCIM not supported on this OS version")
 	}
 
@@ -403,7 +411,7 @@ func createBlockDevice(t *testing.T, dir string) string {
 }
 
 func TestBlockCIMBlockDeviceReadWrite(t *testing.T) {
-	if !IsBlockCimSupported() {
+	if !IsBlockCimMountSupported() {
 		t.Skip("blockCIM not supported on this OS version")
 	}
 
@@ -432,7 +440,7 @@ func TestBlockCIMBlockDeviceReadWrite(t *testing.T) {
 }
 
 func TestMergedBlockCIMs(rootT *testing.T) {
-	if !IsBlockCimSupported() {
+	if !IsBlockCimMountSupported() {
 		rootT.Skipf("BlockCIM not supported")
 	}
 
@@ -526,7 +534,7 @@ func TestMergedBlockCIMs(rootT *testing.T) {
 }
 
 func TestTombstoneInMergedBlockCIMs(rootT *testing.T) {
-	if !IsBlockCimSupported() {
+	if !IsBlockCimMountSupported() {
 		rootT.Skipf("BlockCIM not supported")
 	}
 
@@ -600,7 +608,7 @@ func TestTombstoneInMergedBlockCIMs(rootT *testing.T) {
 }
 
 func TestMergedLinksInMergedBlockCIMs(rootT *testing.T) {
-	if !IsBlockCimSupported() {
+	if !IsBlockCimMountSupported() {
 		rootT.Skipf("BlockCIM not supported")
 	}
 
@@ -680,7 +688,7 @@ func TestMergedLinksInMergedBlockCIMs(rootT *testing.T) {
 }
 
 func TestVerifiedSingleFileBlockCIMMount(t *testing.T) {
-	if !IsVerifiedCimSupported() {
+	if !IsVerifiedCimMountSupported() {
 		t.Skipf("verified CIMs are not supported")
 	}
 
@@ -725,7 +733,7 @@ func TestVerifiedSingleFileBlockCIMMount(t *testing.T) {
 }
 
 func TestVerifiedSingleFileBlockCIMMountReadFailure(t *testing.T) {
-	if !IsVerifiedCimSupported() {
+	if !IsVerifiedCimMountSupported() {
 		t.Skipf("verified CIMs are not supported")
 	}
 
@@ -769,7 +777,11 @@ func TestVerifiedSingleFileBlockCIMMountReadFailure(t *testing.T) {
 }
 
 func TestMergedVerifiedBlockCIMs(rootT *testing.T) {
-	if !IsVerifiedCimSupported() {
+	if !IsVerifiedCimWriteSupported() {
+		rootT.Skipf("verified BlockCIMs are not supported")
+	}
+
+	if !IsVerifiedCimMountSupported() {
 		rootT.Skipf("verified BlockCIMs are not supported")
 	}
 
