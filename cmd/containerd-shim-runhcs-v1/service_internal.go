@@ -107,7 +107,7 @@ func (s *service) createInternal(ctx context.Context, req *task.CreateTaskReques
 
 	spec = oci.UpdateSpecFromOptions(spec, shimOpts)
 	// expand annotations after defaults have been loaded in from options
-	err = oci.ProcessAnnotations(ctx, &spec)
+	err = oci.ProcessAnnotations(ctx, spec.Annotations)
 	// since annotation expansion is used to toggle security features
 	// raise it rather than suppress and move on
 	if err != nil {
@@ -129,7 +129,7 @@ func (s *service) createInternal(ctx context.Context, req *task.CreateTaskReques
 		return nil, fmt.Errorf("invalid runtime sandbox isolation (%s) for hypervisor isolated OCI spec", isolation.String())
 	}
 
-	if !emptyShimOpts {
+	if !emptyShimOpts && shimOpts.GetSandboxPlatform() != "" {
 		// validate runtime platform
 		plat, err := platforms.Parse(shimOpts.GetSandboxPlatform())
 		if err != nil {

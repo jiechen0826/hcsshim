@@ -27,6 +27,7 @@ import (
 	"github.com/Microsoft/hcsshim/internal/schemaversion"
 	"github.com/Microsoft/hcsshim/internal/security"
 	"github.com/Microsoft/hcsshim/internal/uvm/scsi"
+	"github.com/Microsoft/hcsshim/internal/vm/vmutils"
 	"github.com/Microsoft/hcsshim/internal/wclayer"
 	"github.com/Microsoft/hcsshim/osversion"
 	"github.com/Microsoft/hcsshim/pkg/securitypolicy"
@@ -69,9 +70,9 @@ type OptionsWCOW struct {
 	// AdditionalRegistryKeys are Registry keys and their values to additionally add to the uVM.
 	AdditionalRegistryKeys []hcsschema.RegistryValue
 
-	OutputHandlerCreator OutputHandlerCreator // Creates an [OutputHandler] that controls how output received over HVSocket from the UVM is handled. Defaults to parsing output as ETW Log events
-	LogSources           string               // ETW providers to be set for the logging service
-	ForwardLogs          bool                 // Whether to forward logs to the host or not
+	OutputHandlerCreator vmutils.OutputHandlerCreator // Creates an [OutputHandler] that controls how output received over HVSocket from the UVM is handled. Defaults to parsing output as ETW Log events
+	LogSources           string                       // ETW providers to be set for the logging service
+	ForwardLogs          bool                         // Whether to forward logs to the host or not
 }
 
 func defaultConfidentialWCOWOSBootFilesPath() string {
@@ -110,7 +111,7 @@ func NewDefaultOptionsWCOW(id, owner string) *OptionsWCOW {
 				SecurityPolicyEnabled: false,
 			},
 		},
-		OutputHandlerCreator: parseLogrus,
+		OutputHandlerCreator: vmutils.ParseGCSLogrus,
 		ForwardLogs:          true, // Default to true for WCOW, and set to false for CWCOW in internal/oci/uvm.go SpecToUVMCreateOpts
 		LogSources:           "",
 	}
@@ -146,10 +147,10 @@ func prepareCommonConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWC
 
 	// To maintain compatibility with Docker we need to automatically downgrade
 	// a user CPU count if the setting is not possible.
-	uvm.processorCount = uvm.normalizeProcessorCount(ctx, opts.ProcessorCount, processorTopology)
+	uvm.processorCount = vmutils.NormalizeProcessorCount(ctx, uvm.id, opts.ProcessorCount, processorTopology)
 
 	// Align the requested memory size.
-	memorySizeInMB := uvm.normalizeMemorySize(ctx, opts.MemorySizeInMB)
+	memorySizeInMB := vmutils.NormalizeMemorySize(ctx, uvm.id, opts.MemorySizeInMB)
 
 	var registryChanges hcsschema.RegistryChanges
 	// We're getting asked to setup local dump collection for WCOW. We need to:
@@ -209,7 +210,14 @@ func prepareCommonConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWC
 		Weight: uint64(opts.ProcessorWeight),
 	}
 
-	numa, numaProcessors, err := prepareVNumaTopology(ctx, opts.Options)
+	numa, numaProcessors, err := vmutils.PrepareVNumaTopology(ctx, &vmutils.NumaConfig{
+		MaxProcessorsPerNumaNode:   opts.MaxProcessorsPerNumaNode,
+		MaxMemorySizePerNumaNode:   opts.MaxMemorySizePerNumaNode,
+		PreferredPhysicalNumaNodes: opts.PreferredPhysicalNumaNodes,
+		NumaMappedPhysicalNodes:    opts.NumaMappedPhysicalNodes,
+		NumaProcessorCounts:        opts.NumaProcessorCounts,
+		NumaMemoryBlocksCounts:     opts.NumaMemoryBlocksCounts,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +226,7 @@ func prepareCommonConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWC
 		if opts.AllowOvercommit {
 			return nil, fmt.Errorf("vNUMA supports only Physical memory backing type")
 		}
-		if err := validateNumaForVM(numa, processor.Count, memorySizeInMB); err != nil {
+		if err := vmutils.ValidateNumaForVM(numa, processor.Count, memorySizeInMB); err != nil {
 			return nil, fmt.Errorf("failed to validate vNUMA settings: %w", err)
 		}
 	}
@@ -230,7 +238,7 @@ func prepareCommonConfigDoc(ctx context.Context, uvm *UtilityVM, opts *OptionsWC
 	// We can set a cpu group for the VM at creation time in recent builds.
 	if opts.CPUGroupID != "" {
 		if osversion.Build() < osversion.V21H1 {
-			return nil, errCPUGroupCreateNotSupported
+			return nil, vmutils.ErrCPUGroupCreateNotSupported
 		}
 		processor.CpuGroup = &hcsschema.CpuGroup{Id: opts.CPUGroupID}
 	}
@@ -612,7 +620,7 @@ func CreateWCOW(ctx context.Context, opts *OptionsWCOW) (_ *UtilityVM, err error
 	if opts.ForwardLogs {
 		// Create a socket that the executed program can send to. This is usually
 		// used by Log Forward Service to send log data.
-		uvm.outputHandler = opts.OutputHandlerCreator(opts.Options)
+		uvm.outputHandler = opts.OutputHandlerCreator(opts.ID)
 		uvm.outputProcessingDone = make(chan struct{})
 		uvm.outputListener, err = winio.ListenHvsock(&winio.HvsockAddr{
 			VMID:      uvm.RuntimeID(),
