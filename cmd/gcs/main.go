@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -18,6 +19,7 @@ import (
 	cgroups1 "github.com/containerd/cgroups/v3/cgroup1"
 	cgroups1stats "github.com/containerd/cgroups/v3/cgroup1/stats"
 	cgroups2 "github.com/containerd/cgroups/v3/cgroup2"
+	cgroups2stats "github.com/containerd/cgroups/v3/cgroup2/stats"
 	oci "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -38,23 +40,66 @@ import (
 
 // isCgroupV2 checks if cgroup v2 is available on the system
 func isCgroupV2() bool {
+	// Check if cgroup v2 was disabled via kernel parameter
+	if isCgroupV2DisabledByKernel() {
+		return false
+	}
+
 	_, err := os.Stat("/sys/fs/cgroup/cgroup.controllers")
 	return err == nil
 }
 
+// isCgroupV2DisabledByKernel checks if cgroup v2 was disabled via kernel parameters
+func isCgroupV2DisabledByKernel() bool {
+	cmdline, err := os.ReadFile("/proc/cmdline")
+	if err != nil {
+		return false
+	}
+
+	cmdlineStr := string(cmdline)
+	if strings.Contains(cmdlineStr, "cgroup_no_v2=all") {
+		logrus.Info("cgroup v2 disabled by kernel parameter cgroup_no_v2=all")
+		return true
+	}
+
+	return false
+}
+
 // CgroupManager provides a unified interface for cgroup v1 and v2 operations
 type CgroupManager interface {
-	Add(process cgroups1.Process, names ...cgroups1.Name) error
+	Create(pid int) error
 	Delete() error
+	Stats() (*cgroups1stats.Metrics, error)
+	Update(resources *oci.LinuxResources) error
+	AddTask(pid int) error
+	Add(process cgroups1.Process, names ...cgroups1.Name) error
 	RegisterMemoryEvent(event cgroups1.MemoryEvent) (uintptr, error)
 	OOMEventFD() (uintptr, error)
 	// GetV1Cgroup returns the underlying v1 cgroup if available, nil for v2
 	GetV1Cgroup() cgroups1.Cgroup
+	// GetV2Manager returns the underlying v2 manager if available, nil for v1
+	GetV2Manager() *cgroups2.Manager
 }
 
 // V1Manager wraps cgroup v1 operations
 type V1Manager struct {
 	cg cgroups1.Cgroup
+}
+
+func (v *V1Manager) Create(pid int) error {
+	return v.cg.Add(cgroups1.Process{Pid: pid})
+}
+
+func (v *V1Manager) Stats() (*cgroups1stats.Metrics, error) {
+	return v.cg.Stat(cgroups1.IgnoreNotExist)
+}
+
+func (v *V1Manager) Update(resources *oci.LinuxResources) error {
+	return v.cg.Update(resources)
+}
+
+func (v *V1Manager) AddTask(pid int) error {
+	return v.cg.AddTask(cgroups1.Process{Pid: pid})
 }
 
 func (v *V1Manager) Add(process cgroups1.Process, names ...cgroups1.Name) error {
@@ -77,10 +122,36 @@ func (v *V1Manager) GetV1Cgroup() cgroups1.Cgroup {
 	return v.cg
 }
 
+func (v *V1Manager) GetV2Manager() *cgroups2.Manager {
+	return nil
+}
+
 // V2Manager wraps cgroup v2 operations
 type V2Manager struct {
 	mgr  cgroups2.Manager
 	path string
+}
+
+func (v *V2Manager) Create(pid int) error {
+	return v.mgr.AddProc(uint64(pid))
+}
+
+func (v *V2Manager) Stats() (*cgroups1stats.Metrics, error) {
+	v2Stats, err := v.mgr.Stat()
+	if err != nil {
+		return nil, err
+	}
+	// Convert v2 stats to v1 stats format for compatibility
+	return convertV2StatsToV1Stats(v2Stats), nil
+}
+
+func (v *V2Manager) Update(resources *oci.LinuxResources) error {
+	v2Resources := convertToV2Resources(resources)
+	return v.mgr.Update(v2Resources)
+}
+
+func (v *V2Manager) AddTask(pid int) error {
+	return v.mgr.AddProc(uint64(pid))
 }
 
 func (v *V2Manager) Add(process cgroups1.Process, names ...cgroups1.Name) error {
@@ -93,35 +164,235 @@ func (v *V2Manager) Delete() error {
 }
 
 func (v *V2Manager) RegisterMemoryEvent(event cgroups1.MemoryEvent) (uintptr, error) {
-	// For cgroup v2, create a dummy eventfd that never triggers to maintain compatibility
-	// This allows GCS to start while we work on proper v2 memory event implementation
+	// Construct the full cgroup path
+	fullPath := filepath.Join("/sys/fs/cgroup", strings.TrimPrefix(v.path, "/"))
+
+	// Check if the cgroup path exists first
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		// Try to create the cgroup directory if it doesn't exist
+		if err := os.MkdirAll(fullPath, 0755); err != nil {
+			return 0, errors.Wrapf(err, "cgroup path does not exist and cannot be created: %s", v.path)
+		}
+		logrus.WithField("path", v.path).Info("Created missing cgroup directory")
+	}
+
+	// Create eventfd for notifications
 	fd, err := unix.Eventfd(0, unix.EFD_CLOEXEC)
 	if err != nil {
 		return 0, errors.Wrap(err, "failed to create eventfd for v2 memory event")
 	}
+
+	// Extract threshold from event - use method call with proper error handling
+	var thresholdStr string
+	defer func() {
+		if r := recover(); r != nil {
+			// If Arg() panics, use default threshold
+			thresholdStr = ""
+		}
+	}()
+	thresholdStr = event.Arg()
+
+	threshold, err := strconv.ParseUint(thresholdStr, 10, 64)
+	if err != nil {
+		// Default to 50MB if parsing fails
+		threshold = 50 * 1024 * 1024
+		logrus.WithError(err).WithField("arg", thresholdStr).Warn("Failed to parse threshold from event, using default")
+	}
+
+	// Start background monitoring goroutine for cgroup v2
+	go func() {
+		var lastMemoryUsage uint64
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		logrus.WithFields(logrus.Fields{
+			"cgroup_version": "v2",
+			"path":           v.path,
+			"threshold":      threshold,
+		}).Info("Started cgroup v2 memory threshold monitoring")
+
+		for range ticker.C {
+			// Read current memory usage
+			currentUsage, err := readMemoryCurrentV2(v.path)
+			if err != nil {
+				logrus.WithError(err).WithField("path", v.path).Debug("failed to read memory.current")
+				continue
+			}
+
+			// Check if threshold crossed (and it's an increase)
+			if currentUsage > threshold && currentUsage > lastMemoryUsage {
+				// Write to eventfd to notify readMemoryEvents
+				if _, err := unix.Write(fd, []byte{1, 0, 0, 0, 0, 0, 0, 0}); err != nil {
+					logrus.WithError(err).Debug("failed to write to eventfd")
+				} else {
+					logrus.WithFields(logrus.Fields{
+						"current_usage": currentUsage,
+						"threshold":     threshold,
+						"path":          v.path,
+					}).Info("cgroup v2 memory threshold crossed, eventfd notified")
+				}
+			}
+			lastMemoryUsage = currentUsage
+		}
+	}()
+
 	logrus.WithFields(logrus.Fields{
 		"cgroup_version": "v2",
 		"event_type":     "memory_threshold",
-	}).Info("Created dummy eventfd for cgroup v2 memory event (monitoring disabled)")
+		"path":           v.path,
+	}).Info("Created cgroup v2 memory event monitoring (active)")
 	return uintptr(fd), nil
 }
 
 func (v *V2Manager) OOMEventFD() (uintptr, error) {
-	// For cgroup v2, create a dummy eventfd that never triggers to maintain compatibility
-	// This allows GCS to start while we work on proper v2 OOM event implementation
+	// Create eventfd for OOM notifications
 	fd, err := unix.Eventfd(0, unix.EFD_CLOEXEC)
 	if err != nil {
 		return 0, errors.Wrap(err, "failed to create eventfd for v2 OOM event")
 	}
+
+	// Start background OOM monitoring goroutine for cgroup v2
+	go func() {
+		var lastOOMKillCount uint64
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		logrus.WithFields(logrus.Fields{
+			"cgroup_version": "v2",
+			"path":           v.path,
+		}).Info("Started cgroup v2 OOM monitoring")
+
+		for range ticker.C {
+			// Read memory.events file
+			eventsPath := filepath.Join("/sys/fs/cgroup", v.path, "memory.events")
+			data, err := os.ReadFile(eventsPath)
+			if err != nil {
+				logrus.WithError(err).WithField("path", v.path).Debug("failed to read memory.events")
+				continue
+			}
+
+			// Parse events and check for OOM kills
+			events := parseMemoryEvents(string(data))
+			oomKillCount := events["oom_kill"]
+
+			// Check if new OOM kill occurred
+			if oomKillCount > lastOOMKillCount {
+				// Write to eventfd to notify readMemoryEvents
+				if _, err := unix.Write(fd, []byte{1, 0, 0, 0, 0, 0, 0, 0}); err != nil {
+					logrus.WithError(err).Debug("failed to write to OOM eventfd")
+				} else {
+					logrus.WithFields(logrus.Fields{
+						"oom_kill_count": oomKillCount,
+						"path":           v.path,
+					}).Warn("cgroup v2 OOM kill detected, eventfd notified")
+				}
+				lastOOMKillCount = oomKillCount
+			}
+		}
+	}()
+
 	logrus.WithFields(logrus.Fields{
 		"cgroup_version": "v2",
 		"event_type":     "oom",
-	}).Info("Created dummy eventfd for cgroup v2 OOM event (monitoring disabled)")
+		"path":           v.path,
+	}).Info("Created cgroup v2 OOM event monitoring (active)")
 	return uintptr(fd), nil
 }
 
 func (v *V2Manager) GetV1Cgroup() cgroups1.Cgroup {
 	return nil
+}
+
+func (v *V2Manager) GetV2Manager() *cgroups2.Manager {
+	return &v.mgr
+}
+
+// parseMemoryEvents parses cgroup v2 memory.events file
+// Format: "low 0\nhigh 5\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n"
+func parseMemoryEvents(content string) map[string]uint64 {
+	events := make(map[string]uint64)
+	lines := strings.Split(strings.TrimSpace(content), "\n")
+	for _, line := range lines {
+		parts := strings.Fields(line)
+		if len(parts) == 2 {
+			if val, err := strconv.ParseUint(parts[1], 10, 64); err == nil {
+				events[parts[0]] = val
+			}
+		}
+	}
+	return events
+}
+
+// readMemoryCurrentV2 reads current memory usage from cgroup v2
+func readMemoryCurrentV2(cgroupPath string) (uint64, error) {
+	filePath := filepath.Join("/sys/fs/cgroup", cgroupPath, "memory.current")
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
+}
+
+// convertV2StatsToV1Stats converts cgroup v2 stats to v1 stats format
+func convertV2StatsToV1Stats(v2Stats *cgroups2stats.Metrics) *cgroups1stats.Metrics {
+	if v2Stats == nil {
+		return &cgroups1stats.Metrics{}
+	}
+
+	v1Stats := &cgroups1stats.Metrics{}
+
+	if v2Stats.Memory != nil {
+		v1Stats.Memory = &cgroups1stats.MemoryStat{
+			Usage: &cgroups1stats.MemoryEntry{
+				Usage: v2Stats.Memory.Usage,
+				Limit: v2Stats.Memory.UsageLimit,
+				Max:   v2Stats.Memory.MaxUsage,
+			},
+			Swap: &cgroups1stats.MemoryEntry{
+				Usage: v2Stats.Memory.SwapUsage,
+				Limit: v2Stats.Memory.SwapLimit,
+				Max:   v2Stats.Memory.SwapMaxUsage,
+			},
+			HierarchicalMemoryLimit: v2Stats.Memory.UsageLimit,
+			HierarchicalSwapLimit:   v2Stats.Memory.SwapLimit,
+			RSS:                     v2Stats.Memory.Anon,
+			Cache:                   v2Stats.Memory.File,
+			MappedFile:              v2Stats.Memory.FileMapped,
+			Dirty:                   v2Stats.Memory.FileDirty,
+			Writeback:               v2Stats.Memory.FileWriteback,
+			PgFault:                 v2Stats.Memory.Pgfault,
+			PgMajFault:              v2Stats.Memory.Pgmajfault,
+			InactiveAnon:            v2Stats.Memory.InactiveAnon,
+			ActiveAnon:              v2Stats.Memory.ActiveAnon,
+			InactiveFile:            v2Stats.Memory.InactiveFile,
+			ActiveFile:              v2Stats.Memory.ActiveFile,
+			Unevictable:             v2Stats.Memory.Unevictable,
+		}
+	}
+
+	if v2Stats.CPU != nil {
+		v1Stats.CPU = &cgroups1stats.CPUStat{
+			Usage: &cgroups1stats.CPUUsage{
+				Total:  v2Stats.CPU.UsageUsec * 1000,  // Convert usec to nsec
+				User:   v2Stats.CPU.UserUsec * 1000,   // Convert usec to nsec
+				Kernel: v2Stats.CPU.SystemUsec * 1000, // Convert usec to nsec
+			},
+			Throttling: &cgroups1stats.Throttle{
+				Periods:          v2Stats.CPU.NrPeriods,
+				ThrottledPeriods: v2Stats.CPU.NrThrottled,
+				ThrottledTime:    v2Stats.CPU.ThrottledUsec * 1000, // Convert usec to nsec
+			},
+		}
+	}
+
+	if v2Stats.Pids != nil {
+		v1Stats.Pids = &cgroups1stats.PidsStat{
+			Current: v2Stats.Pids.Current,
+			Limit:   v2Stats.Pids.Limit,
+		}
+	}
+
+	return v1Stats
 }
 
 // convertToV2Resources converts oci.LinuxResources to cgroups2.Resources
@@ -201,39 +472,59 @@ func readMemoryEvents(startTime time.Time, efdFile *os.File, cgName string, thre
 			return
 		}
 
-		// Sometimes an event is sent during cgroup teardown, but does not indicate that the
-		// threshold was actually crossed. In the teardown case the cgroup.event_control file
-		// won't exist anymore, so check that to determine if we should ignore this event.
-		_, err := os.Lstat(fmt.Sprintf("/sys/fs/cgroup/memory%s/cgroup.event_control", cgName))
-		if os.IsNotExist(err) {
-			return
+		// For cgroup v1, check if event_control file still exists (for teardown detection)
+		// For cgroup v2, we skip this check since event_control doesn't exist
+		if cg != nil {
+			// cgroup v1 path
+			_, err := os.Lstat(fmt.Sprintf("/sys/fs/cgroup/memory%s/cgroup.event_control", cgName))
+			if os.IsNotExist(err) {
+				return
+			}
 		}
 
 		count++
 		var msg string
 		if strings.HasPrefix(cgName, "/virtual-pods") {
 			msg = "memory usage for virtual pods cgroup exceeded threshold"
+		} else if strings.Contains(cgName, "oom") || strings.Contains(cgName, "OOM") {
+			msg = "OOM event occurred in cgroup"
 		} else {
 			msg = "memory usage for cgroup exceeded threshold"
 		}
+
 		entry := logrus.WithFields(logrus.Fields{
 			"gcsStartTime":   startTime,
 			"time":           time.Now(),
 			"cgroup":         cgName,
 			"thresholdBytes": threshold,
 			"count":          count,
+			"cgroup_version": func() string {
+				if cg != nil {
+					return "v1"
+				} else {
+					return "v2"
+				}
+			}(),
 		})
+
 		// Sleep for one second in case there is a series of allocations slightly after
 		// reaching threshold.
 		time.Sleep(time.Second)
-		metrics, err := cg.Stat(cgroups1.IgnoreNotExist)
-		if err != nil {
-			// Don't return on Stat err as it will return an error if
-			// any of the cgroup subsystems Stat calls failed for any reason.
-			// We still want to log if we hit the cgroup threshold/limit
-			entry.WithError(err).Error(msg)
+
+		if cg != nil {
+			// cgroup v1: get detailed stats
+			metrics, err := cg.Stat(cgroups1.IgnoreNotExist)
+			if err != nil {
+				// Don't return on Stat err as it will return an error if
+				// any of the cgroup subsystems Stat calls failed for any reason.
+				// We still want to log if we hit the cgroup threshold/limit
+				entry.WithError(err).Error(msg)
+			} else {
+				entry.WithFields(memoryLogFormat(metrics)).Warn(msg)
+			}
 		} else {
-			entry.WithFields(memoryLogFormat(metrics)).Warn(msg)
+			// cgroup v2: simpler logging without detailed metrics
+			entry.Warn(msg)
 		}
 	}
 }
@@ -518,10 +809,8 @@ func main() {
 	}
 	h := hcsv2.NewHost(rtime, tport, initialEnforcer, logWriter)
 	// Initialize virtual pod support in the host
-	if v1Cgroup := virtualPodsControl.GetV1Cgroup(); v1Cgroup != nil {
-		h.InitializeVirtualPodSupport(v1Cgroup)
-	} else {
-		logrus.Warn("Virtual pod support initialization skipped for cgroup v2 (not yet implemented)")
+	if err := h.InitializeVirtualPodSupport(virtualPodsControl); err != nil {
+		logrus.WithError(err).Warn("Virtual pod support initialization failed")
 	}
 	b.AssignHandlers(mux, h)
 
@@ -575,23 +864,33 @@ func main() {
 
 	go func() {
 		if v1Cgroup := gcsControl.GetV1Cgroup(); v1Cgroup != nil {
+			// cgroup v1: use existing readMemoryEvents function
 			readMemoryEvents(startTime, gefdFile, "/gcs", int64(*gcsMemLimitBytes), v1Cgroup)
 		} else {
-			logrus.Warn("Memory events for /gcs skipped for cgroup v2 (not yet implemented)")
+			// cgroup v2: use same readMemoryEvents but with polling-based eventfd
+			logrus.Info("Memory events for /gcs enabled for cgroup v2 with polling")
+			// Create a dummy cgroup for the readMemoryEvents function (it won't be used for v2)
+			readMemoryEvents(startTime, gefdFile, "/gcs", int64(*gcsMemLimitBytes), nil)
 		}
 	}()
 	go func() {
 		if v1Cgroup := containersControl.GetV1Cgroup(); v1Cgroup != nil {
+			// cgroup v1: use existing readMemoryEvents function
 			readMemoryEvents(startTime, oomFile, "/containers", containersLimit, v1Cgroup)
 		} else {
-			logrus.Warn("Memory events for /containers skipped for cgroup v2 (not yet implemented)")
+			// cgroup v2: use same readMemoryEvents but with polling-based eventfd
+			logrus.Info("Memory events for /containers enabled for cgroup v2 with polling")
+			readMemoryEvents(startTime, oomFile, "/containers", containersLimit, nil)
 		}
 	}()
 	go func() {
 		if v1Cgroup := virtualPodsControl.GetV1Cgroup(); v1Cgroup != nil {
+			// cgroup v1: use existing readMemoryEvents function
 			readMemoryEvents(startTime, virtualPodsOomFile, "/containers/virtual-pods", containersLimit, v1Cgroup)
 		} else {
-			logrus.Warn("Memory events for /containers/virtual-pods skipped for cgroup v2 (not yet implemented)")
+			// cgroup v2: use same readMemoryEvents but with polling-based eventfd
+			logrus.Info("Memory events for /containers/virtual-pods enabled for cgroup v2 with polling")
+			readMemoryEvents(startTime, virtualPodsOomFile, "/containers/virtual-pods", containersLimit, nil)
 		}
 	}()
 	err = b.ListenAndServe(bridgeIn, bridgeOut)

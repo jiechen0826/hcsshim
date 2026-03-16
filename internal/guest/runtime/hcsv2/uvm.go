@@ -21,6 +21,7 @@ import (
 
 	cgroups "github.com/containerd/cgroups/v3/cgroup1"
 	cgroup1stats "github.com/containerd/cgroups/v3/cgroup1/stats"
+	cgroups2 "github.com/containerd/cgroups/v3/cgroup2"
 	"github.com/mattn/go-shellwords"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
@@ -60,7 +61,7 @@ type VirtualPod struct {
 	MasterSandboxID  string
 	NetworkNamespace string
 	CgroupPath       string
-	CgroupControl    cgroups.Cgroup
+	CgroupControl    interface{}     // Can be either cgroups.Cgroup (v1) or *cgroups2.Manager (v2)
 	Containers       map[string]bool // containerID -> exists
 	CreatedAt        time.Time
 }
@@ -75,10 +76,11 @@ type Host struct {
 	externalProcesses      map[int]*externalProcess
 
 	// Virtual pod support for multi-pod scenarios
-	virtualPodsMutex        sync.Mutex
-	virtualPods             map[string]*VirtualPod // virtualSandboxID -> VirtualPod
-	containerToVirtualPod   map[string]string      // containerID -> virtualSandboxID
-	virtualPodsCgroupParent cgroups.Cgroup         // Parent cgroup for all virtual pods
+	virtualPodsMutex           sync.Mutex
+	virtualPods                map[string]*VirtualPod // virtualSandboxID -> VirtualPod
+	containerToVirtualPod      map[string]string      // containerID -> virtualSandboxID
+	virtualPodsCgroupParent    cgroups.Cgroup         // Parent cgroup for all virtual pods (v1)
+	virtualPodsCgroupV2Manager interface{}            // Parent cgroup manager for virtual pods (v2)
 
 	rtime            runtime.Runtime
 	vsock            transport.Transport
@@ -1273,15 +1275,107 @@ func isPrivilegedContainerCreationRequest(ctx context.Context, spec *specs.Spec)
 	return oci.ParseAnnotationsBool(ctx, spec.Annotations, annotations.LCOWPrivileged, false)
 }
 
+// convertSpecsToV2Resources converts specs.LinuxResources to cgroups2.Resources
+func convertSpecsToV2Resources(resources *specs.LinuxResources) *cgroups2.Resources {
+	if resources == nil {
+		return &cgroups2.Resources{}
+	}
+
+	v2Resources := &cgroups2.Resources{}
+
+	// Memory conversion
+	if resources.Memory != nil {
+		v2Memory := &cgroups2.Memory{}
+		if resources.Memory.Limit != nil {
+			v2Memory.Max = resources.Memory.Limit
+		}
+		if resources.Memory.Reservation != nil {
+			v2Memory.Low = resources.Memory.Reservation
+		}
+		if resources.Memory.Swap != nil {
+			v2Memory.Swap = resources.Memory.Swap
+		}
+		v2Resources.Memory = v2Memory
+	}
+
+	// CPU conversion
+	if resources.CPU != nil {
+		v2CPU := &cgroups2.CPU{}
+		if resources.CPU.Shares != nil {
+			// Convert shares to weight (shares * 262144 / 1024)
+			weight := *resources.CPU.Shares * 256 / 1024
+			if weight < 1 {
+				weight = 1
+			} else if weight > 10000 {
+				weight = 10000
+			}
+			v2CPU.Weight = &weight
+		}
+		if resources.CPU.Quota != nil && resources.CPU.Period != nil {
+			v2CPU.Max = cgroups2.NewCPUMax(resources.CPU.Quota, resources.CPU.Period)
+		}
+		v2Resources.CPU = v2CPU
+	}
+
+	// PIDs conversion
+	if resources.Pids != nil && resources.Pids.Limit != nil && *resources.Pids.Limit > 0 {
+		v2Resources.Pids = &cgroups2.Pids{
+			Max: *resources.Pids.Limit,
+		}
+	}
+
+	// IO conversion
+	if resources.BlockIO != nil {
+		v2IO := &cgroups2.IO{}
+		if resources.BlockIO.Weight != nil {
+			v2IO.BFQ.Weight = *resources.BlockIO.Weight
+		}
+		v2Resources.IO = v2IO
+	}
+
+	return v2Resources
+}
+
 // Virtual Pod Management Methods
 
 // InitializeVirtualPodSupport sets up the parent cgroup for virtual pods
-func (h *Host) InitializeVirtualPodSupport(virtualPodsCgroup cgroups.Cgroup) {
+func (h *Host) InitializeVirtualPodSupport(virtualPodsCgroupManager interface{}) error {
 	h.virtualPodsMutex.Lock()
 	defer h.virtualPodsMutex.Unlock()
 
-	h.virtualPodsCgroupParent = virtualPodsCgroup
-	logrus.Info("Virtual pod support initialized")
+	// Check if the manager is nil
+	if virtualPodsCgroupManager == nil {
+		return errors.New("no valid cgroup manager provided for virtual pod support")
+	}
+
+	// Try to get the CgroupManager interface methods
+	type CgroupManagerInterface interface {
+		GetV1Cgroup() cgroups.Cgroup
+		GetV2Manager() *cgroups2.Manager
+		Create(pid int) error
+		Delete() error
+	}
+
+	if mgr, ok := virtualPodsCgroupManager.(CgroupManagerInterface); ok {
+		if v1Cgroup := mgr.GetV1Cgroup(); v1Cgroup != nil {
+			h.virtualPodsCgroupParent = v1Cgroup
+			logrus.Info("Virtual pod support initialized with cgroup v1")
+			return nil
+		} else if v2Manager := mgr.GetV2Manager(); v2Manager != nil {
+			h.virtualPodsCgroupV2Manager = v2Manager
+			logrus.Info("Virtual pod support initialized with cgroup v2")
+			return nil
+		}
+	}
+
+	// Fallback to direct cgroup assignment for backward compatibility
+	if cg, ok := virtualPodsCgroupManager.(cgroups.Cgroup); ok {
+		h.virtualPodsCgroupParent = cg
+		logrus.Info("Virtual pod support initialized with direct cgroup assignment")
+		return nil
+	}
+
+	return fmt.Errorf("no valid cgroup manager provided for virtual pod support")
 }
 
 // CreateVirtualPod creates a new virtual pod with its own cgroup and network namespace
@@ -1294,20 +1388,7 @@ func (h *Host) CreateVirtualPod(ctx context.Context, virtualSandboxID, masterSan
 		return fmt.Errorf("virtual pod %s already exists", virtualSandboxID)
 	}
 
-	// Create cgroup path for this virtual pod under the parent cgroup
-	parentPath := ""
-	if h.virtualPodsCgroupParent != nil {
-		if pather, ok := h.virtualPodsCgroupParent.(interface{ Path() string }); ok {
-			parentPath = pather.Path()
-		} else {
-			parentPath = "/containers/virtual-pods" // fallback for default behavior
-		}
-	} else {
-		parentPath = "/containers/virtual-pods" // fallback for default behavior
-	}
-	cgroupPath := path.Join(parentPath, virtualSandboxID)
-
-	// Create the cgroup for this virtual pod with resource limits if provided
+	// Extract resource limits if provided
 	resources := &specs.LinuxResources{}
 	if pSpec != nil && pSpec.Linux != nil && pSpec.Linux.Resources != nil {
 		resources = pSpec.Linux.Resources
@@ -1318,9 +1399,37 @@ func (h *Host) CreateVirtualPod(ctx context.Context, virtualSandboxID, masterSan
 		logrus.WithField("virtualSandboxID", virtualSandboxID).Info("Creating pod cgroup with default resources as none were specified")
 	}
 
-	cgroupControl, err := cgroups.New(cgroups.StaticPath(cgroupPath), resources)
-	if err != nil {
-		return errors.Wrapf(err, "failed to create cgroup for virtual pod %s", virtualSandboxID)
+	var cgroupControl interface{}
+	var cgroupPath string
+	var err error
+
+	// Use appropriate API based on which cgroup version is available
+	if h.virtualPodsCgroupParent != nil {
+		// cgroup v1 path
+		if pather, ok := h.virtualPodsCgroupParent.(interface{ Path() string }); ok {
+			parentPath := pather.Path()
+			cgroupPath = path.Join(parentPath, virtualSandboxID)
+		} else {
+			cgroupPath = path.Join("/containers/virtual-pods", virtualSandboxID) // fallback
+		}
+		cgroupControl, err = cgroups.New(cgroups.StaticPath(cgroupPath), resources)
+		if err != nil {
+			return errors.Wrapf(err, "failed to create cgroup v1 for virtual pod %s", virtualSandboxID)
+		}
+		logrus.WithField("cgroupPath", cgroupPath).Info("Created virtual pod with cgroup v1")
+	} else if h.virtualPodsCgroupV2Manager != nil {
+		// cgroup v2 path
+		cgroupPath = path.Join("/containers/virtual-pods", virtualSandboxID)
+		// Convert specs.LinuxResources to cgroup v2 compatible resources
+		v2Resources := convertSpecsToV2Resources(resources)
+		manager, err := cgroups2.NewManager("/sys/fs/cgroup", cgroupPath, v2Resources)
+		if err != nil {
+			return errors.Wrapf(err, "failed to create cgroup v2 for virtual pod %s", virtualSandboxID)
+		}
+		cgroupControl = manager
+		logrus.WithField("cgroupPath", cgroupPath).Info("Created virtual pod with cgroup v2")
+	} else {
+		return fmt.Errorf("no virtual pod cgroup manager available (neither v1 nor v2)")
 	}
 
 	// Create virtual pod structure
@@ -1422,8 +1531,20 @@ func (h *Host) RemoveContainerFromVirtualPod(containerID string) {
 // cleanupVirtualPod removes a virtual pod and its cgroup (should be called with mutex held)
 func (h *Host) cleanupVirtualPod(virtualSandboxID string) {
 	if vp, exists := h.virtualPods[virtualSandboxID]; exists {
-		// Delete the cgroup
-		if err := vp.CgroupControl.Delete(); err != nil {
+		// Delete the cgroup - handle both v1 and v2 types
+		var err error
+		if v1Cgroup, ok := vp.CgroupControl.(cgroups.Cgroup); ok {
+			// v1 cgroup
+			err = v1Cgroup.Delete()
+		} else if v2Manager, ok := vp.CgroupControl.(*cgroups2.Manager); ok {
+			// v2 cgroup
+			err = v2Manager.Delete()
+		} else {
+			logrus.WithField("virtualSandboxID", virtualSandboxID).
+				Warn("Unknown cgroup control type in virtual pod")
+		}
+
+		if err != nil {
 			logrus.WithError(err).WithField("virtualSandboxID", virtualSandboxID).
 				Warn("Failed to delete virtual pod cgroup")
 		}

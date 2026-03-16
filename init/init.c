@@ -311,20 +311,45 @@ void init_fs(const struct InitOp* ops, size_t count) {
     }
 }
 
+// Check if cgroup v2 should be disabled via kernel parameter
+bool is_cgroup_v2_disabled() {
+    FILE* f = fopen("/proc/cmdline", "r");
+    if (f == NULL) {
+        return false; // If we can't read cmdline, don't assume disabled
+    }
+
+    char cmdline[4096];
+    if (fgets(cmdline, sizeof(cmdline), f) != NULL) {
+        // Check for cgroup_no_v2=all parameter
+        if (strstr(cmdline, "cgroup_no_v2=all") != NULL) {
+            fclose(f);
+            dmesgInfo("cgroup v2: disabled by kernel parameter cgroup_no_v2=all\n");
+            return true;
+        }
+    }
+    fclose(f);
+    return false;
+}
+
 // Try mounting cgroup v2 to see if it works
 bool is_cgroup_v2_available() {
+    // First check if cgroup v2 is explicitly disabled
+    if (is_cgroup_v2_disabled()) {
+        return false;
+    }
+
     // Try to mount cgroup v2 to test if it works
     if (mount("cgroup2", "/sys/fs/cgroup", "cgroup2", MS_NODEV | MS_NOSUID | MS_NOEXEC, "") < 0) {
         dmesgInfo("cgroup v2: test mount failed\n");
         return false;
     }
-    
+
     // Check if controllers file appeared
     if (access("/sys/fs/cgroup/cgroup.controllers", F_OK) == 0) {
         dmesgInfo("cgroup v2: test mount successful, controllers found\n");
         return true; // Leave it mounted, init_cgroups_v2() will just log success
     }
-    
+
     // Mount worked but no controllers - clean up
     dmesgInfo("cgroup v2: test mount succeeded but no controllers\n");
     umount("/sys/fs/cgroup");

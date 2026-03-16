@@ -13,6 +13,8 @@ import (
 
 	cgroups "github.com/containerd/cgroups/v3/cgroup1"
 	v1 "github.com/containerd/cgroups/v3/cgroup1/stats"
+	cgroups2 "github.com/containerd/cgroups/v3/cgroup2"
+	v2 "github.com/containerd/cgroups/v3/cgroup2/stats"
 	oci "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -307,19 +309,231 @@ func (c *Container) setExitType(signal syscall.Signal) {
 	}
 }
 
+// isCgroupV2 checks if cgroup v2 is available on the system
+func isCgroupV2() bool {
+	_, err := os.Stat("/sys/fs/cgroup/cgroup.controllers")
+	return err == nil
+}
+
+// convertV2StatsToV1 converts cgroup v2 metrics to v1 metrics format
+func convertV2StatsToV1(v2Stats *v2.Metrics) *v1.Metrics {
+	metrics := &v1.Metrics{}
+
+	// Convert Memory stats
+	if v2Stats.Memory != nil {
+		metrics.Memory = &v1.MemoryStat{
+			Usage: &v1.MemoryEntry{
+				Usage: v2Stats.Memory.Usage,
+				Limit: v2Stats.Memory.UsageLimit,
+				Max:   v2Stats.Memory.MaxUsage,
+			},
+			Swap: &v1.MemoryEntry{
+				Usage: v2Stats.Memory.SwapUsage,
+				Limit: v2Stats.Memory.SwapLimit,
+				Max:   v2Stats.Memory.SwapMaxUsage,
+			},
+			Kernel: &v1.MemoryEntry{
+				Usage: v2Stats.Memory.KernelStack, // Best approximation
+				Limit: 0,                          // v2 doesn't separate kernel limits
+				Max:   0,
+			},
+			KernelTCP: &v1.MemoryEntry{
+				Usage: v2Stats.Memory.Sock, // Best approximation
+				Limit: 0,
+				Max:   0,
+			},
+			// Map some v2 fields to v1 equivalents
+			Cache:        v2Stats.Memory.File,
+			RSS:          v2Stats.Memory.Anon,
+			MappedFile:   v2Stats.Memory.FileMapped,
+			Dirty:        v2Stats.Memory.FileDirty,
+			Writeback:    v2Stats.Memory.FileWriteback,
+			InactiveAnon: v2Stats.Memory.InactiveAnon,
+			ActiveAnon:   v2Stats.Memory.ActiveAnon,
+			InactiveFile: v2Stats.Memory.InactiveFile,
+			ActiveFile:   v2Stats.Memory.ActiveFile,
+			Unevictable:  v2Stats.Memory.Unevictable,
+		}
+	}
+
+	// Convert memory events to OOM control info in the main Metrics struct
+	if v2Stats.MemoryEvents != nil {
+		metrics.MemoryOomControl = &v1.MemoryOomControl{
+			OomKill:        v2Stats.MemoryEvents.Oom,
+			OomKillDisable: 0, // v2 doesn't have disable flag
+			UnderOom:       0, // v2 doesn't track this directly
+		}
+	}
+
+	// Convert CPU stats
+	if v2Stats.CPU != nil {
+		metrics.CPU = &v1.CPUStat{
+			Usage: &v1.CPUUsage{
+				Total:  v2Stats.CPU.UsageUsec * 1000, // convert usec to nsec
+				Kernel: v2Stats.CPU.SystemUsec * 1000,
+				User:   v2Stats.CPU.UserUsec * 1000,
+			},
+			Throttling: &v1.Throttle{
+				Periods:          v2Stats.CPU.NrPeriods,
+				ThrottledPeriods: v2Stats.CPU.NrThrottled,
+				ThrottledTime:    v2Stats.CPU.ThrottledUsec * 1000,
+			},
+		}
+	}
+
+	// Convert IO stats (v2 Io -> v1 Blkio)
+	if v2Stats.Io != nil && len(v2Stats.Io.Usage) > 0 {
+		metrics.Blkio = &v1.BlkIOStat{
+			IoServiceBytesRecursive: make([]*v1.BlkIOEntry, 0, len(v2Stats.Io.Usage)*2),
+			IoServicedRecursive:     make([]*v1.BlkIOEntry, 0, len(v2Stats.Io.Usage)*2),
+		}
+
+		for _, entry := range v2Stats.Io.Usage {
+			// Read bytes
+			metrics.Blkio.IoServiceBytesRecursive = append(
+				metrics.Blkio.IoServiceBytesRecursive,
+				&v1.BlkIOEntry{
+					Major: entry.Major,
+					Minor: entry.Minor,
+					Op:    "Read",
+					Value: entry.Rbytes,
+				},
+			)
+			// Write bytes
+			metrics.Blkio.IoServiceBytesRecursive = append(
+				metrics.Blkio.IoServiceBytesRecursive,
+				&v1.BlkIOEntry{
+					Major: entry.Major,
+					Minor: entry.Minor,
+					Op:    "Write",
+					Value: entry.Wbytes,
+				},
+			)
+			// Read IOs
+			metrics.Blkio.IoServicedRecursive = append(
+				metrics.Blkio.IoServicedRecursive,
+				&v1.BlkIOEntry{
+					Major: entry.Major,
+					Minor: entry.Minor,
+					Op:    "Read",
+					Value: entry.Rios,
+				},
+			)
+			// Write IOs
+			metrics.Blkio.IoServicedRecursive = append(
+				metrics.Blkio.IoServicedRecursive,
+				&v1.BlkIOEntry{
+					Major: entry.Major,
+					Minor: entry.Minor,
+					Op:    "Write",
+					Value: entry.Wios,
+				},
+			)
+		}
+	}
+
+	// Convert PIDs stats
+	if v2Stats.Pids != nil {
+		metrics.Pids = &v1.PidsStat{
+			Current: v2Stats.Pids.Current,
+			Limit:   v2Stats.Pids.Limit,
+		}
+	}
+
+	// Convert Hugetlb stats
+	if len(v2Stats.Hugetlb) > 0 {
+		metrics.Hugetlb = make([]*v1.HugetlbStat, len(v2Stats.Hugetlb))
+		for i, stats := range v2Stats.Hugetlb {
+			metrics.Hugetlb[i] = &v1.HugetlbStat{
+				Usage:   stats.Current,
+				Max:     stats.Max,
+				Failcnt: 0, // v2 doesn't track failure count
+			}
+		}
+	}
+
+	// Convert RDMA stats - both v1 and v2 use []*RdmaEntry format
+	if v2Stats.Rdma != nil {
+		// Need to convert v2 RdmaEntry to v1 RdmaEntry
+		metrics.Rdma = &v1.RdmaStat{}
+
+		// Convert Current entries
+		if len(v2Stats.Rdma.Current) > 0 {
+			metrics.Rdma.Current = make([]*v1.RdmaEntry, len(v2Stats.Rdma.Current))
+			for i, entry := range v2Stats.Rdma.Current {
+				metrics.Rdma.Current[i] = &v1.RdmaEntry{
+					Device:     entry.Device,
+					HcaHandles: entry.HcaHandles,
+					HcaObjects: entry.HcaObjects,
+				}
+			}
+		}
+
+		// Convert Limit entries
+		if len(v2Stats.Rdma.Limit) > 0 {
+			metrics.Rdma.Limit = make([]*v1.RdmaEntry, len(v2Stats.Rdma.Limit))
+			for i, entry := range v2Stats.Rdma.Limit {
+				metrics.Rdma.Limit[i] = &v1.RdmaEntry{
+					Device:     entry.Device,
+					HcaHandles: entry.HcaHandles,
+					HcaObjects: entry.HcaObjects,
+				}
+			}
+		}
+	}
+
+	// Convert Network stats (v2 returns array, v1 expects array)
+	if len(v2Stats.Network) > 0 {
+		metrics.Network = make([]*v1.NetworkStat, len(v2Stats.Network))
+		for i, netStat := range v2Stats.Network {
+			metrics.Network[i] = &v1.NetworkStat{
+				Name:      netStat.Name,
+				RxBytes:   netStat.RxBytes,
+				RxPackets: netStat.RxPackets,
+				RxErrors:  netStat.RxErrors,
+				RxDropped: netStat.RxDropped,
+				TxBytes:   netStat.TxBytes,
+				TxPackets: netStat.TxPackets,
+				TxErrors:  netStat.TxErrors,
+				TxDropped: netStat.TxDropped,
+			}
+		}
+	}
+
+	return metrics
+}
+
 // GetStats returns the cgroup metrics for the container.
+// Works with both cgroup v1 and v2 systems.
 func (c *Container) GetStats(ctx context.Context) (*v1.Metrics, error) {
 	_, span := oc.StartSpan(ctx, "opengcs::Container::GetStats")
 	defer span.End()
 	span.AddAttributes(trace.StringAttribute("cid", c.id))
 
 	cgroupPath := c.spec.Linux.CgroupsPath
-	cg, err := cgroups.Load(cgroups.StaticPath(cgroupPath))
-	if err != nil {
-		return nil, errors.Errorf("failed to get container stats for %v: %v", c.id, err)
-	}
 
-	return cg.Stat(cgroups.IgnoreNotExist)
+	// Detect cgroup version and use appropriate library
+	if isCgroupV2() {
+		// Use cgroup v2 library and convert to v1.Metrics
+		mgr, err := cgroups2.Load(cgroupPath)
+		if err != nil {
+			return nil, errors.Errorf("failed to load v2 cgroup for container %v: %v", c.id, err)
+		}
+		v2Stats, err := mgr.Stat()
+		if err != nil {
+			return nil, errors.Errorf("failed to get v2 stats for container %v: %v", c.id, err)
+		}
+
+		// Convert v2.Metrics to v1.Metrics
+		return convertV2StatsToV1(v2Stats), nil
+	} else {
+		// Use existing v1 approach
+		cg, err := cgroups.Load(cgroups.StaticPath(cgroupPath))
+		if err != nil {
+			return nil, errors.Errorf("failed to get container stats for %v: %v", c.id, err)
+		}
+		return cg.Stat(cgroups.IgnoreNotExist)
+	}
 }
 
 func (c *Container) modifyContainerConstraints(ctx context.Context, _ guestrequest.RequestType, cc *guestresource.LCOWContainerConstraints) (err error) {
